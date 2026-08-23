@@ -21,12 +21,20 @@ if [ "$dry_run" -eq 1 ]; then echo "validated NetTool desktop release; no files 
 [ "$(id -u)" -eq 0 ] || { echo "desktop installation requires root" >&2; exit 5; }
 stage="$prefix.staging.$$"
 backup="$prefix.backup.$(date +%Y%m%d%H%M%S)"
+desktop_entry=/usr/share/applications/nettool.desktop
+desktop_backup="$desktop_entry.backup.$(date +%Y%m%d%H%M%S)"
 old_moved=0
+new_moved=0
+desktop_old_moved=0
+desktop_new_written=0
 cleanup() {
   status=$?
   if [ "$status" -ne 0 ]; then
     rm -rf "$stage"
+    if [ "$new_moved" -eq 1 ] && [ -e "$prefix" ]; then rm -rf "$prefix"; fi
     if [ "$old_moved" -eq 1 ] && [ ! -e "$prefix" ] && [ -e "$backup" ]; then mv "$backup" "$prefix" || true; fi
+    if [ "$desktop_new_written" -eq 1 ] && [ -e "$desktop_entry" ]; then rm -f "$desktop_entry"; fi
+    if [ "$desktop_old_moved" -eq 1 ] && [ ! -e "$desktop_entry" ] && [ -e "$desktop_backup" ]; then mv "$desktop_backup" "$desktop_entry" || true; fi
   fi
   exit "$status"
 }
@@ -37,8 +45,14 @@ for name in nettool nettool-desktop nettool-agent nettool-gui nettool-dataplane;
 done
 sed "s#^Exec=.*#Exec=$prefix/nettool-desktop#" "$(dirname "$0")/nettool.desktop" > "$stage/nettool.desktop"
 mkdir -p "$(dirname "$prefix")" /usr/share/applications
+if [ -e "$desktop_entry" ]; then mv "$desktop_entry" "$desktop_backup"; desktop_old_moved=1; fi
+install -m 0644 "$stage/nettool.desktop" "$desktop_entry"
+desktop_new_written=1
 if [ -e "$prefix" ]; then mv "$prefix" "$backup"; old_moved=1; fi
 mv "$stage" "$prefix"
-install -m 0644 "$prefix/nettool.desktop" /usr/share/applications/nettool.desktop
+new_moved=1
 old_moved=0
+desktop_old_moved=0
+desktop_new_written=0
+new_moved=0
 echo "installed NetTool desktop to $prefix"

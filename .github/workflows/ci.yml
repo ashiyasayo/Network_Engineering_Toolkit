@@ -68,6 +68,29 @@ jobs:
           }
       - name: Build desktop package
         run: cd apps/desktop && cargo tauri build --bundles ${{ matrix.bundles }}
+      - name: Verify Unix package contents
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eu
+          for name in nettool nettool-agent nettool-gui nettool-dataplane; do
+            find target/release/bundle -type f -name "$name" -print -quit | grep -q .
+          done
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            test "$(find target/release/bundle -type f -name '*.AppImage' | wc -l)" -ge 1
+            test "$(find target/release/bundle -type f -name '*.deb' | wc -l)" -ge 1
+          else
+            test "$(find target/release/bundle -type f -name '*.dmg' | wc -l)" -ge 1
+          fi
+      - name: Verify Windows package contents
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $names = @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe')
+          foreach ($name in $names) {
+            if (-not (Get-ChildItem target/release/bundle -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
+          }
+          if (-not (Get-ChildItem target/release/bundle -Recurse -File -Filter *.msi)) { throw 'missing MSI package' }
       - name: Upload desktop packages
         uses: actions/upload-artifact@v4
         with:

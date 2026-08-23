@@ -22,6 +22,7 @@
 - 本機無網路且 Cargo cache 沒有 `tauri` crate，`cargo check -p nettool-desktop --offline` 因缺少 crates.io `tauri` 明確失敗；格式、shell 語法、Tauri JSON 設定與 diff check 已通過。
 - 依 desktop review 修正 runtime sidecar 定位、`NETTOOL_DATAPLANE_BIN` 傳遞、GUI `/health` ready check、8765 port collision 與啟動失敗 cleanup；Tauri resources 改由 `prepare-tauri-resources.sh` 在正式 bundling 前 staging。
 - 同步修正 Windows/Linux/macOS release manifest、Linux 自訂 prefix 的 desktop entry、installer rollback，以及 CI 的 DMG/MSI/AppImage/deb package matrix 與 artifact upload。
+- 回歸 review 後再修正 Tauri `resource_dir()` sidecar resolver、動態 loopback port/一次性 health path、Linux desktop entry rollback，以及 CI bundle 副檔名與 runtime binary 內容斷言；macOS 動態 port 原生啟動已再次驗證。
 
 ## 最近驗證
 
