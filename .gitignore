@@ -1,4 +1,4 @@
 /target/
+.codebase-memory/
 *.pcap
 *.pcapng
-

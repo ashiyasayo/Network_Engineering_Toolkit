@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      # Loopback socket integration tests require a Linux runner with local bind permission;
+      # other platforms still compile and run the complete non-ignored suite.
+      - name: Run Linux loopback integration tests
+        if: runner.os == 'Linux'
+        run: |
+          cargo test -p nettool-agent --bin nettool-agent -- --ignored
+          cargo test -p nettool-speed -- --ignored
+          cargo test -p nettool-node -- --ignored
+      - name: Compile Linux AF_XDP surface
+        if: runner.os == 'Linux'
+        run: cargo check -p nettool-backend-af-xdp --target x86_64-unknown-linux-gnu
+      - name: Exercise Windows RIO boundary
+        if: runner.os == 'Windows'
+        run: cargo test -p nettool-backend-rio --all-targets
