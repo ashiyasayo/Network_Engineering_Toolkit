@@ -1,4 +1,5 @@
 /target/
 .codebase-memory/
+*.DS_Store
 *.pcap
 *.pcapng
