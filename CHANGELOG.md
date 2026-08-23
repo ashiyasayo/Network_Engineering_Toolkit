@@ -1,0 +1,162 @@
+# Changelog
+
+## Unreleased
+
+- 新增 Network Profile metadata 的 `profile create/show/list/delete` CLI/Agent actions，保存 revision 1 configuration 與 SHA-256 checksum；`profile apply/confirm/rollback` 已經由 authenticated Helper Safe Apply client 執行，平台 adapter 仍依作業系統逐步補齊。
+- 新增 `profile edit/export/import`，edit 建立新的 checksum-protected SQLite revision，export/import 使用 `nettool.profile.v1` JSON 文件。
+- 新增 `hosts add/remove`，Agent 僅解析指定 managed section，再透過 authenticated Helper atomic replace 更新，保留區塊外 hosts 內容。
+- Hosts managed entries 新增 `enable/disable` 狀態；disabled mapping 以 `NETTOOL DISABLED` marker 保留，重新 enable 不需重建原始 entry。
+- 新增 Helper-owned `hosts backup/restore`，備份檔留在 Helper state directory，恢復時以 atomic replace 寫回 hosts file。
+- 新增 `ip set`、`ip dhcp` 與 `dns set` CLI/Agent actions，統一轉成完整 `NetworkDesiredState` 並經 Helper Safe Apply 驗證。
+- 新增 `node list` 與 `node status`，回傳已配對 trusted Node 的非敏感 inventory metadata。
+- 新增 `node pair` CLI/Agent workflow，驗證 certificate DER、SPKI fingerprint、TLS server name 與 control address；既有 identity 變更需明確 `--confirm-identity-change`。
+- `node pair` 現在要求 CLI `--confirm-fingerprint` 或 GUI out-of-band checkbox；Storage 在 trust transaction 前對未完成獨立 fingerprint 核對的 request fail closed。
+- 新增 Storage pairing security regression test，驗證未完成 out-of-band fingerprint 核對時回傳 `NODE.TLS_FAILED` 且不寫入 trust record。
+- 新增 `docs/REQUIREMENT_TRACEABILITY.md`，集中列出規格項目、實作模組、自動化證據與硬體實機驗收狀態。
+- CLI `node pair` 現在對所有重複欄位 fail closed，避免重複參數被最後一個值靜默覆寫，並補上 parser regression test。
+- AF_XDP worker 新增 TX ring 提交後的 kernel wakeup（zero-length `sendto` kick）API，避免僅更新 producer index 而未觸發 NIC 傳送；維持 caller-controlled ring ownership。
+- UDP socket receiver 改用預先配置的 bounded sequence window，移除每個 packet 對無界 `HashSet` 的配置成長；完整 tracker 仍保留供離線/相容性分析，並新增 loss/reordering/duplicate 測試。
+- Packet flow table 現在限制最多 1,000,000 entries、啟動時以 `try_reserve` 預留容量並在配置失敗時回傳 stable error，避免高流量期間 HashMap rehash 或無界 flow 設定。
+- Agent 已實際處理 wire `dry_run`：非 helper action 回傳不執行副作用的 plan，privileged action 將旗標傳給 helper dry-run path，並補上 payload hash regression test。
+- CLI 新增全域 `--dry-run` 旗標，可將安全 plan 送入 Agent，而不執行 action side effect；重複旗標會 fail closed。
+- 修正 `speed.run` accelerated backend 邊界：DPDK、AF_XDP 與 RIO 在 executor 尚未接入時不會回退到 socket worker；會在建立遠端 session 前回傳明確 unsupported/backend-not-built 錯誤。
+- `speed history` CLI option parser 現在允許 `--limit` 與 `--format csv` 任意順序，並對缺值、未知格式與重複旗標 fail closed。
+- Agent dry-run 現在會先做無副作用的 JSON/schema validation；malformed `speed.run`、benchmark profile、session 與 profile payload 不會被錯誤回報為可執行 plan。
+- dry-run plan 的 `permission` 欄位改為穩定 snake_case（`read_only`、`user`、`privileged`），不再暴露 Rust Debug 名稱。
+- `speed.run` 對 socket executor 不支援的 `auto_tune`、`latency_under_load` 與 NUMA 選項改為明確拒絕，避免宣稱已執行但實際忽略設定。
+- Node control listener 改為每條新連線載入最新 trust registry；完成 pairing 或撤銷 trust 後不需重啟 Agent，既有 TLS session 維持原狀。
+- 新增 `node revoke <id-or-name>`，以 transaction 原子撤銷 trusted Node 並保留歷史 pairing metadata。
+- 修正 `node.revoke` Action contract：撤銷屬非冪等副作用，重送會攜帶 operation ID 並由 caller 明確處理既有 revoked 狀態。
+- Windows `agent-client` 已改用 Tokio Named Pipe 實作 bounded Agent request/response framing；Agent server-side Named Pipe 與 Windows privileged executor 仍待完成。
+- Agent server 已加入 Windows Named Pipe listener，與 Unix listener 共用同一 Action dispatch 與 bounded framing；Windows helper authentication/executor 仍待完成。
+- `profile apply` 新增規格指定的 `--confirm-timeout` 旗標，並保留 `--timeout` 相容別名。
+- Native DPDK dataplane 新增 bounded raw TX template command；支援 frame-size/packet-count validation、hardware preflight、exclusive TX queue 與 unsent progress guard，未連結 SDK 時 fail closed。
+- Native DPDK dataplane 新增 bounded RX capture command；以 non-blocking queue 與旋轉 PCAPNG writer 保存指定 burst，未連結 SDK 時 fail closed，未宣稱 lossless 或 line-rate。
+- Native DPDK hardware snapshot 新增 PMD `rte_eth_xstats` 讀取，輸出 driver-specific 與 per-queue extended counters，並與基本 `rte_eth_stats` 分開標示來源。
+- 新增 `nettool-gui` localhost GUI 殼層：Dashboard、Interfaces、Profiles、Hosts、Speed、Packet、Node、Settings、Logs 導覽均經既有 Agent Action API；只允許 loopback bind，Agent 不可用時 fail closed。
+- 新增 `nettool-platform-auth` Windows-only FFI 邊界，透過 Named Pipe client process token 解析 SID；helper-server 提供 `serve_named_pipe_one`，未能取得 OS identity 時 fail closed。
+- AF_XDP probe 改為要求 Linux BPF filesystem 與至少一張 NIC，並在輸出中獨立呈現 `af_xdp_zero_copy_capable`；未取得 driver evidence 時固定為 false，不再把基本 kernel surface 當成 zero-copy。
+- 新增 macOS `packaging/macos/install.sh` 與 Windows `packaging/windows/install.ps1` staging installer：固定 binary allowlist、來源完整性檢查、同 volume 原子替換與失敗恢復；不註冊尚未完成的 privileged helper。
+- GUI Dashboard 導覽新增 Speed history、Packet connections 與 dataplane probe 查詢頁，仍透過同一 Agent Action API，並呈現 Agent unavailable 錯誤狀態。
+- GUI 新增受 `ActionRegistry` 限制的 Action Console，可執行所有已註冊 CLI-equivalent actions 並以 JSON 顯示結果；任意 shell/command 不會進入 API。
+- Helper core 新增 macOS `networksetup` fixed-argv command builder，支援 DHCP/static IPv4、IPv6 mode、DNS 與 MTU，對 routes/unsafe interface 明確拒絕；尚未接入 macOS privileged service。
+- Helper core 新增 Windows `netsh.exe` fixed-argv command builder，支援 DHCP/static IPv4、IPv6 mode、DNS 與 MTU，對 routes/search domains/unsafe interface 明確拒絕；尚未接入 Windows privileged service。
+- 平台 command runner 邊界新增執行前 re-validation：只接受固定絕對 executable path、有限 argv 長度，並拒絕 NUL 與 shell metacharacters，避免繞過 builder 直接執行不受信任命令。
+- macOS/Windows adapter builder 現在拒絕多位址與未支援的 DNS search domains，避免只套用第一個 address 造成部分成功；routes/search domains 仍待完整平台 read-back 後支援。
+- 新增 `execute_platform_commands` fail-closed 序列執行器：每個 command 在執行前重新驗證，遇到非零結果立即停止後續命令，交由外層 Safe Apply 負責 rollback。
+- Helper core 新增 generic `PlatformNetworkExecutor`：以平台 state reader 組合 fixed-argv apply、typed snapshot、read-back verify 與 helper-owned restore；Windows OS state reader 與兩平台 privileged service wiring 仍待平台實機整合。
+- 新增 macOS `networksetup` state reader：解析 IPv4/IPv6、DNS 與 MTU，對非連續 subnet、未知輸出與不可表示 gateway fail closed。
+- 新增 Windows `netsh.exe` state reader：解析 IPv4/IPv6 DHCP/static、DNS 與 MTU，對未知語系格式與不可表示 gateway fail closed。
+- Unix helper service 已在 macOS 分支接上 `PlatformNetworkExecutor` 與 `networksetup` reader，共用 authenticated IPC、Safe Apply watchdog 與 rollback；Windows Named Pipe helper runtime 仍待完成。
+- 新增 Windows helper Named Pipe runtime：使用 kernel token SID allowlist、bounded request timeout、Safe Apply watchdog、Windows `netsh` executor 與 helper-owned snapshots；Windows target cross-compile 仍受目前環境無法下載 `windows-sys` 限制。
+- Windows helper 已補上 Hosts managed-section replace，並透過 `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)` 封裝 atomic replacement，避免既有 hosts 檔案在 Windows 上因 rename 不覆寫而失敗。
+- DPDK backend 新增 AF_XDP queue/zero-copy preflight contract：要求 zero-copy 時缺乏 driver evidence 直接 fail，compatibility mode 則明確回傳 warning，不會把 capability 誤當成 implementation。
+- `speed history` 新增 `--format csv`，由 CLI 以固定欄位與 RFC 4180 quoting 輸出非敏感 session history；Agent 對 format 欄位採 deny/validate。
+- 新增 `nettool-backend-af-xdp` Linux socket setup crate：固定 ring sizes、interface/queue bind 與 `XDP_ZEROCOPY` 強制旗標；socket setup 不會誤稱為完整 data-plane，UMEM registration/worker 仍明確未接入。
+- AF_XDP setup 已補 page-aligned UMEM allocation 與 `XDP_UMEM_REG` registration；UMEM owner lifetime 綁定 socket setup，XDP program/XSKMAP、fill/completion producer 與 packet worker 仍未接入。
+- AF_XDP UMEM 新增 bounded `FrameDescriptor` 產生器，集中 headroom、frame index、payload length 與 overflow checks，供後續 ring owner 重用。
+- AF_XDP 新增 bounded SPSC `FrameRing`，以 acquire/release ordering 串接 producer/consumer，滿/空時 non-blocking，避免 hot path allocation。
+- 新增 `nettool-backend-rio` Windows RIO resource boundary：固定 registered buffer、bounded request/completion queue 與 descriptor bounds；Winsock RIO API 尚未連結，`is_backend_built()` 維持 false。
+- AF_XDP socket 新增 `XDP_MMAP_OFFSETS` ring metadata query，回傳 RX/TX/FILL/COMPLETION producer/consumer/descriptor offsets；實際 mmap owner 與 packet worker 仍未宣稱完成。
+- AF_XDP 新增四-ring RAII mmap mapping，依 kernel offsets 計算 page-aligned 長度並在 teardown `munmap`；mapping 尚未接 descriptor accessors 或 packet worker。
+- AF_XDP ring mapping 新增 bounded producer/consumer index 與 `xdp_desc` volatile accessors，所有 offset/slot 都做 mapping bounds check；多執行緒 ownership 仍由上層 worker 保證。
+- AF_XDP 新增 FILL ring 初始化：以 UMEM frame base addresses 填入 descriptors，檢查 ring 初始 ownership、容量與 frame bounds 後才發布 producer index。
+- AF_XDP 新增 bounded `AfXdpWorker` façade：RX drain、TX submit、COMPLETION recycle 與 FILL refill 均遵守 ring ownership、capacity 與 UMEM bounds；尚未負責 XDP redirect 或 poll loop。
+- AF_XDP socket 新增 bounded `poll` wait，僅等待 RX readiness、區分 timeout 與 error/hangup，避免 worker 以 busy-loop 等待封包。
+- AF_XDP worker 新增 `receive_once`，整合 bounded RX wait 與單批 descriptor drain；timeout 直接回傳零筆，不產生 synthetic packet result。
+- AF_XDP worker 新增 multi-buffer `receive_packet_into`，依 `XDP_PKT_CONTD` 聚合 jumbo descriptor chain；chain 未完成或 output 不足時不發布 consumer。
+- AF_XDP 新增 Linux `BPF_MAP_TYPE_XSKMAP` RAII map，支援 bounded queue→socket FD 更新並在 drop 關閉 map；XDP redirect program attach 仍未連結。
+- Agent dataplane probe/perf backend 現在分開回報 Windows RIO platform capability 與 implementation availability；RIO 未連結時維持 fail-closed。
+- AF_XDP 新增固定 eBPF `bpf_redirect_map` program 與 `BPF_LINK_CREATE` interface attachment，載入或 attach 失敗直接回傳 kernel error，link/program 由 RAII 釋放。
+- AF_XDP `BPF_PROG_LOAD` payload 補齊 kernel attach fields，填入 interface index 與 `BPF_XDP` expected attach type，保留 verifier log buffer。
+- AF_XDP redirect instruction builder 新增 Linux unit coverage，固定驗證 RX queue offset、map FD pseudo-load、redirect helper 與 exit sequence。
+- Agent `perf.backend` 不再硬編碼 AF_XDP implementation availability；Linux native AF_XDP code 已連結時回報 implementation，實際 `available` 仍受 platform/runtime capability gate 限制。
+- Agent `speed.run` 現在對 AF_XDP/RIO 執行 backend preflight；未通過 Linux zero-copy 或 Windows RIO implementation gate 時，在建立遠端 session 前 fail-closed。
+- `perf.backend` 新增 RIO preflight gate evidence（platform、implementation、can_run），與 implementation availability 分開呈現。
+- RIO resource boundary 新增固定容量 request/completion queue pair，completion queue 滿時保留 request ownership，避免遺失 completion evidence。
+- 新增 Windows-only RIO extension discovery FFI：以 `WSAIoctl(SIO_GET_MULTIPLE_EXTENSION_FUNCTION_POINTER)` 取得官方 function table，registered buffer 由 `RIORegisterBuffer`/`RIODeregisterBuffer` RAII 管理；未 discovery 前 implementation availability 仍為 false。
+- RIO registered buffer 新增 bounds-checked `RIO_BUF` slice model，固定以 buffer ID、u32 offset、u32 length 描述可重用區段。
+- Windows-only RIO FFI 新增 completion queue/request queue 建立與 RAII handle 邊界；request queue 生命週期繫結 socket，實際 Windows linker/API 驗證仍待 Windows runner。
+- RIO FFI 再補固定 `RIO_BUF` slice 的 receive/send submission 與 bounded completion dequeue，request context 以 opaque token 回傳；Windows runner 實機驗證仍待完成。
+- RIO registered-buffer registration 新增 owner-borrow API，並將 raw pointer registration 明確標為 unsafe，防止 native buffer lifetime 被安全 API 隱式縮短。
+- GUI Node 頁面新增 typed pairing 表單，可讀取 DER certificate、要求 identity replacement confirmation，並經既有 `node.pair` Agent action 保存 trust material。
+- Linux packaging 新增 `install-helper.sh`：dry-run 先驗證 release/user/UID，正式執行才以 root 安裝 helper、env、systemd unit 並啟動服務。
+- macOS/Windows staging installers 新增 symlink/reparse-point rejection，避免 allowlist release 透過檔案連結逃逸安裝目錄。
+- 新增 `nettool-platform-affinity` bounded Linux current-thread affinity adapter；native DPDK RX/TX worker 啟動時套用固定 worker CPU ownership，syscall 失敗即停止，不靜默忽略 pinning。
+- DPDK Linux environment collector 新增 typed RSS evidence parser，拒絕自由文字並比對宣告 queue count 與 sysfs RX queue 數；格式錯誤或 mismatch 會清除 RSS certification evidence。
+- DPDK `QueuePlan` 新增 orchestration 前 invariant validation，固定檢查 one-queue/one-worker 的 contiguous queue IDs、unique CPU owners 與 RX/TX non-zero。
+- Native DPDK RX/TX/capture path 現在啟動前讀取最新 NIC probe，透過 `plan_queues` 產生並驗證 queue ownership，PortConfiguration 不再硬編碼 RX/TX queue 數。
+- DPDK preflight 新增明確的 `MANAGEMENT_NIC_PROTECTION` gate；control plane 提供相同 PCI address 時直接拒絕把 management NIC 交給 DPDK。
+- Linux dataplane 新增 `/proc/net/route` default-route 唯讀解析，將已知 management interface 映射為 PCI evidence 後送入 DPDK preflight。
+- 新增 Agent/CLI `packet capture start/stop` lifecycle；capture session 持久化至 `packet_session`，由 Agent 管理 dataplane child process 並保存終態。
+- `packet_session` 新增 forward-only 終態 migration，明確保存 running/completed/failed/canceled，取消與失敗不再被誤報為 completed。
+- 新增 read-only `speed history` Action/CLI，回傳 bounded、非敏感的 SQLite session summaries。
+- 新增 `packet analyze --input` Agent action，重用 bounded offline PCAP/PCAPNG worker 並回傳 coverage、drop 與統計資料。
+- 新增 Linux `packet stats`，回傳指定或全部介面的 kernel RX/TX counters 與 dropped counters，非 Linux 明確回報 unsupported。
+- CI 跨平台矩陣保留 Ubuntu loopback integration tests，macOS/Windows 執行完整 non-ignored workspace lint/test，避免把 Unix-only socket 測試誤當成跨平台通過。
+- 新增 `interface list/show/refresh` CLI/Agent read-only actions，回傳 NIC driver、link speed、queue 與 NUMA metadata。
+- Profile apply/confirm/rollback 與 Hosts list/replace 已接上 `NETTOOL_HELPER_SOCKET` 的 authenticated privileged Helper client；缺少 Helper transport 時明確 fail closed。
+- `speed.run` 現在支援 socket upload、TCP/UDP download 與 TCP/UDP bidirectional 的實際 Agent lifecycle：remote Prepare、共同 scheduled Start、並行 authorized TCP/UDP sender/receiver、ResultQuery 與 sender 失敗時的取消清理；raw 與 accelerated executor 仍明確回報 unsupported。
+- Helper Safe Apply 與 managed hosts replace 的 fallback operation ID 現在納入 interface/profile 與 hosts payload fingerprint，避免同一 Agent 的平行請求互相覆蓋。
+- `speed.run` 新增 TCP/UDP download 與 bidirectional lifecycle：initiator pre-bind receiver endpoint，remote Node 保留對應 sender/receiver worker，雙端以同一 `start_at` 啟動並保存雙方向結果。
+- Agent socket upload lifecycle 現在同步寫入 SQLite `speed_session`：preparing、running、completed/failed 終態具冪等與 conflict 保護，loopback result test 會驗證 completed persistence。
+- 新增 `nettool speed cancel <session-id>`：由 Agent 依持久化 session 找到 trusted remote、透過 mTLS 送出 idempotent StopTest，確認 CANCELED 後保存本機 canceled state；IPC client 改為獨立 task 以支援長測試期間的取消 request。
+- Node receiver scheduler 新增原子 endpoint handoff、Completed/Failed 終態、資源釋放與 immutable SHA-256 result 保存，並補上 loopback mTLS upload integration coverage。
+- 新增 DPDK 同 NUMA queue/core planner 與動態 mbuf pool sizing，拒絕重複 worker CPU、跨 NUMA 容量不足、零值及整數溢位。
+- 新增 feature-gated `dpdk-sys` C shim、`dpdk-safe` RAII handles 與真實 PMD RX 路徑；預設 build 保持明確的 backend-not-built，並提供不連結 SDK 的 `ffi-api` 編譯檢查。
+- 新增 DPDK RX/TX queue exclusive ownership、bulk template TX 與 unsent mbuf 回收，以及 raw generator profile/flow matrix 驗證與 Ethernet wire-rate 基準計算。
+- 新增公開 `speed run` CLI option/unit parsing、嚴格共用 payload validation、trusted Node 唯一解析與 `NODE.NOT_PAIRED` stable error；尚未附著 control transport 時不產生 synthetic result。
+- 新增 Node control client：bounded TCP/TLS/Hello timeout、X.509 SubjectPublicKeyInfo fingerprint 與 Hello Node ID 雙重 identity binding、CSPRNG request correlation，以及 typed capability/prepare/start/stop/ping exchanges。
+- 新增 Speed session capability planner，驗證固定 capability ID/version、拒絕重複或缺少能力，並在產生 `PrepareTest` 前強制 UDP dynamic source-port authorization。
+- 新增 client-side Speed session orchestrator：以 CSPRNG 建立 session ID，串接 capability/prepare/start/stop，並拒絕無效 data port、空 authorization tag、錯誤 session correlation 或非預期遠端狀態。
+- 新增跨平台安全 Node IdentityProvider：首次產生非零 128-bit Node ID、PKCS#8 private key 與 certificate，只透過 macOS Keychain、Windows Credential Manager 或 Linux Secret Service 保存；載入時驗證 bounded envelope 與憑證／金鑰一致性，Agent 在 IPC listener 前 fail closed 載入。
+- 新增 SQLite v2 Node connection trust migration，保存 paired certificate DER、TLS server name 與 control socket；寫入時驗證 SPKI fingerprint，identity change 未經明確 re-pair confirmation 不得覆寫。
+- Agent-owned `speed.run` runtime 現可使用平台 identity 與 paired trust material完成真實 mutual TLS、Hello、capability exchange 與 planner preflight；data-plane executor 未附著時在 remote Prepare 前停止，避免資源洩漏。
+- SQLite Speed session persistence 新增 preparing/running/completed/failed/canceled 的原子狀態轉移、相同 request 冪等重送、session ID reuse conflict，以及 terminal result JSON persistence。
+- 擴充 Prepare endpoint contract，分別傳遞 initiator/remote sender source 與 receiver ports；planner 與 orchestrator 依 upload/download/bidirectional 強制 pre-bind 並拒絕缺漏，raw test 禁止夾帶 socket ports。
+- 新增 socket data-plane authorization：TCP 每條 stream 執行 bounded session/stream/tag handshake，UDP 在 DATA 前執行 AUTH bootstrap；錯誤、重複或未授權資料不進入量測並回傳 `NODE.DATA_PLANE_UNAUTHORIZED`。
+- Protocol minor 1 新增可重試的 `TestResultRequest`；Node 正常完成路徑驗證 versioned JSON、推進 Finalizing/Completed、釋放 reservation 並保存 SHA-256，client 拒絕 result session/checksum mismatch。Stop 不再被拿來冒充成功完成。
+- 新增 trusted Node control server dispatcher：Hello-first、authenticated Node ID、version/request gates，以及 Capability、receiver/sender/bidirectional Prepare、scheduled Start、Stop、Ping、ResultQuery 映射；跨 connection 共用 Agent-owned coordinator，raw/accelerated role 在配置資源前明確拒絕。
+- Agent 新增 explicit opt-in `NETTOOL_CONTROL_LISTEN` TCP+mTLS listener：由 trusted certificate registry 建立 client roots，拒絕 fingerprint ambiguity，TLS 後再次以 SPKI fingerprint 選定 peer並綁定 Hello Node ID；未設定時不開放網路 port。
+
+- 建立 Rust workspace、核心 domain/error/backend crate 與 CI 基線。
+- 新增 `nettool-dataplane probe [--output json]` P0 環境探測命令。
+- 新增集中式 Action registry、Agent Protobuf framing 與 Unix socket client/server。
+- 新增 SQLite v1 metadata schema 與 forward migration，涵蓋規格列出的 15 張資料表。
+- 新增 `nettool health`、`profile list` 與 `dataplane probe` CLI 垂直切片。
+- 新增 whitelist-only helper protocol，任意 shell/command operation 無法反序列化。
+- 新增 helper-owned Safe Apply deadline、原子 state persistence、SHA-256 audit 與重啟後逾期 rollback。
+- 將 Helper network desired state 收斂為逐層拒絕未知欄位的 typed schema，並加入 IP/route/DNS/MTU validation、Safe Apply 冪等重送及逾期 confirm 拒絕。
+- 新增 Helper 1 MiB bounded framing、wire/authenticated request 分離、Unix kernel peer credential 注入與 exact principal allowlist；payload 無法偽造 caller identity。
+- 新增 Linux NetworkManager Ethernet executor：absolute `nmcli` path、shell-free argv、UUID profile lookup、原子 snapshot、typed apply、read-back verify 與 restore。
+- 新增可執行的 Linux `nettool-helper` service，串接 kernel peer authentication、Safe Apply、Hosts 與 NetworkManager，啟動時先恢復逾期操作；附 systemd/sysusers/environment 安裝資產。
+- Helper service 新增每秒 Safe Apply deadline watchdog 與兩秒 client exchange timeout，slow client 無法無限期阻止 rollback。
+- 新增 Linux PCI `vfio-pci` prepare/restore 與 global/NUMA Huge Page prepare/release handlers；原 driver/count 由 Helper 持久化，write 後讀回驗證，restore 不接受 caller 指定 driver。
+- Helper state、resource snapshots 與 Hosts 原子 rename 後同步 parent directory，提高 crash durability。
+- 新增 Hosts managed section 無損取代與 marker 結構驗證。
+- 補齊 Interface、Profile、Hosts、Node trust、Session、Packet、Benchmark、Hardware、Reservation 與 Audit domain models。
+- 新增多 stream TCP compatibility engine、固定 16-byte UDP compact header 與 loss/reorder/duplicate accounting。
+- 新增 NTCP 12-byte frame、Node Protobuf v1 baseline、版本/能力協商與 connection state machine。
+- 新增 SHA-256 Node identity fingerprint、identity-change 拒絕與 TLS 1.3-only mutual authentication transport。
+- 新增 Node TCP session coordinator、dynamic ephemeral port、session-scoped authorization 與 prepare/start/stop operation 冪等去重。
+- 新增 Agent-owned Resource Manager，支援 exclusive/shared claims、容量限制、atomic reservation、結構化衝突與完整 lifecycle。
+- Node dynamic data port 已納入 Resource Manager reservation/release。
+- 新增 DPDK runtime、PCI device、driver、queue、NUMA、Huge Page 與 CPU affinity preflight gates。
+- 新增 zero-allocation `PacketView`、worker-local statistics、七類 drop accounting、100 ms 級 aggregator 與 atomic stop token。
+- 新增 HIGH/MEDIUM/LOW/INVALID confidence evaluator；POC threshold 未固定前不猜測認證數字。
+- 新增 zero-allocation、bounds-checked Ethernet/VLAN/QinQ/ARP/IPv4/IPv6/ICMP/TCP/UDP parser。
+- 新增雙向 canonical flow key、stable worker shard mapping 與 TCP sequence state/classification；capture drop 時 retransmission confidence 必定降級。
+- 新增 worker-local bounded flow table、idle timeout、LRU-like capacity eviction 與 lookup/creation/eviction counters。
+- 新增 run-to-completion Packet Worker，串接 backend burst、capture、parser、flow table、TCP retransmission 與 worker-local counters；sampling coverage 與 omitted count 明確輸出。
+- 新增獨立 bounded capture queue、metadata/header/snaplen/full capture policy、PCAPNG/PCAP writer 與 size/duration/count rotation。
+- 新增 full capture storage rate/capacity guard；不足時回傳 `LOSSLESS_CAPTURE_NOT_CERTIFIED`，不宣稱 lossless。
+- `nettool-dataplane rx --backend dpdk --interface <pci>` 現在先執行 preflight，backend 未連結時明確失敗而不輸出虛假結果。
+- 新增 bounded streaming PCAP/PCAPNG offline backend 與 `nettool-dataplane analyze`，支援完整或明確標記的 sampling 分析、timestamp/queue metadata 與損壞輸入長度驗證。
+- 新增 Speed Test 完整 lifecycle、雙端 READY barrier、不可變 `start_at` 排程與 monotonic measurement window；Node 不再於 Start request 抵達時提前切換 Running，並阻止排程越過 authorization lifetime。
+- 補齊完整 UDP speed v1 header、payload length validation、transit-delta jitter、unlimited/fixed/ramp rate model、batch/hardware pacing selection、可配置 loss threshold，以及具共同 `start_at` 證據的雙向結果 contract。
+- 新增實際 UDP socket TX/RX compatibility engine：預配置 payload、fixed-rate batch pacing、session/stream/source IP+port 過濾、END/timeout completion 與完整 sequence/jitter/invalid/unauthorized counters。
+- Node coordinator 新增 UDP dynamic source/destination port、exclusive reservation、endpoint-bound authorization、冪等 prepare/start/stop 與 Speed Engine socket/config handoff；authorization 現在完整比對 source/destination endpoint、protocol 與固定時間 tag。
+- 新增 Benchmark core：完整 environment snapshot、必要 packet/flow matrix、RX/TX baseline、A–J gates、thermal conditions、reproducibility、平台組合 certification key 與三級支援判定；沒有有效 POC policy 時不可能誤標 100G Certified。
+- SQLite storage 新增原子 benchmark persistence：內部重新執行 evaluator、保存環境/結果/checksum，只有完整 Certified outcome 才建立 hardware certification；缺 certification ID 或任何 constraint 失敗時整筆 transaction 回滾。
+- 新增 Linux benchmark environment collector 與 `nettool perf topology/backend`：從 procfs/sysfs 收集可證明欄位，RSS/offload/DPDK version 僅接受已驗證輸入，並分開呈現 accelerated runtime capability 與尚未連結的 implementation availability。
+- 新增 benchmark profile registry、固定 phase runner、bounded evidence、recoverable/degraded/fatal handling、cooperative cancellation，以及 `perf profile list` / `perf benchmark --profile` CLI contract；硬體 executor 未連結時明確失敗而不生成假結果。
