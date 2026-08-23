@@ -134,6 +134,9 @@ struct HttpResponse {
 
 async fn route(request: HttpRequest) -> HttpResponse {
     match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/health") => {
+            json_response("200 OK", json!({"service":"nettool-gui","status":"ok"}))
+        }
         ("GET", "/" | "/index.html") => text_response(
             "200 OK",
             "text/html; charset=utf-8",

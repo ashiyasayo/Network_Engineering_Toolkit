@@ -15,6 +15,7 @@
     "active": true,
     "targets": ["app", "dmg", "deb", "appimage", "msi"],
     "icon": ["icons/icon.svg"],
+    "resources": ["resources/*"],
     "category": "Utility",
     "shortDescription": "Cross-platform network engineering toolkit",
     "longDescription": "Network profiles, diagnostics, packet analysis and controlled speed testing through the NetTool Agent."
