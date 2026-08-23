@@ -20,6 +20,8 @@
 - 新增 Tauri 2 `nettool-desktop` 原生殼層：啟動並管理 Agent/GUI backend，於原生 WebView 顯示既有 Action API Dashboard；不直接執行網路或特權操作。
 - 新增 macOS `.app`、Windows release staging、Linux desktop staging 與 desktop entry 安裝資產；正式簽章、notarization、平台實機 ACL 與發行 runner 仍待驗。
 - 本機無網路且 Cargo cache 沒有 `tauri` crate，`cargo check -p nettool-desktop --offline` 因缺少 crates.io `tauri` 明確失敗；格式、shell 語法、Tauri JSON 設定與 diff check 已通過。
+- 依 desktop review 修正 runtime sidecar 定位、`NETTOOL_DATAPLANE_BIN` 傳遞、GUI `/health` ready check、8765 port collision 與啟動失敗 cleanup；Tauri resources 改由 `prepare-tauri-resources.sh` 在正式 bundling 前 staging。
+- 同步修正 Windows/Linux/macOS release manifest、Linux 自訂 prefix 的 desktop entry、installer rollback，以及 CI 的 DMG/MSI/AppImage/deb package matrix 與 artifact upload。
 
 ## 最近驗證
 

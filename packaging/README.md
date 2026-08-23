@@ -14,4 +14,6 @@ cargo run -p nettool-desktop
 - Windows：`./packaging/windows/build-release.ps1` staging 後，使用 Tauri/WiX 產生 MSI；正式 MSI 必須 Authenticode 簽章。
 - Linux：`./packaging/linux/build-release.sh` staging 後，使用 Tauri bundler 產生 AppImage/deb；`install-desktop.sh` 適合內部部署。
 
+使用 Tauri bundler 時，先執行 `cargo build --release -p nettool -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane`，再執行 `./packaging/prepare-tauri-resources.sh`，最後執行 `cargo tauri build`。Tauri bundle 會把四個 runtime sidecar 從 `apps/desktop/resources` 一起帶入。
+
 所有 installer 都以固定 binary allowlist、staging directory 與 same-volume replacement 降低更新中斷風險。Helper 仍是獨立安裝步驟，不會因安裝 GUI 而取得 root 權限。

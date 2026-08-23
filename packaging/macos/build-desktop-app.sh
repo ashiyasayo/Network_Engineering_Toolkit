@@ -5,10 +5,11 @@ root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 version=${NETTOOL_VERSION:-0.1.0}
 out=${1:-"$root/target/macos"}
 app="$out/NetTool.app"
-cargo build --manifest-path "$root/Cargo.toml" --release -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane
+cargo build --manifest-path "$root/Cargo.toml" --release -p nettool -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$root/target/release/nettool-desktop" "$app/Contents/MacOS/NetTool"
+cp "$root/target/release/nettool" "$app/Contents/Resources/nettool"
 cp "$root/target/release/nettool-agent" "$app/Contents/Resources/nettool-agent"
 cp "$root/target/release/nettool-gui" "$app/Contents/Resources/nettool-gui"
 cp "$root/target/release/nettool-dataplane" "$app/Contents/Resources/nettool-dataplane"
