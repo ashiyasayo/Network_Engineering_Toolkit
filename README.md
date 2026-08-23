@@ -1,5 +1,9 @@
 # Network Engineering Toolkit
 
+## 授權
+
+本專案採 `MIT OR Apache-2.0` 雙重授權。請參閱 [授權說明](LICENSE.md)、[MIT License](LICENSE-MIT) 與 [Apache License 2.0](LICENSE-APACHE)。第三方依賴與平台元件仍受其各自授權條款約束。
+
 規格驅動的跨平台網路設定、測速與封包分析工具。目前包含 Repository Bootstrap、P0 唯讀環境探測，以及可執行的 Agent/CLI 控制平面基線。
 
 Node control client 已具備 TCP+mTLS connect timeout、paired public-key fingerprint、Hello Node ID/version binding、CSPRNG request correlation，以及 capability/prepare/start/stop/heartbeat typed exchange。Client-side Speed session orchestration 會查詢 runtime capabilities、驗證計畫、執行 Prepare，並檢查 dynamic data port、authorization tag、Start/Stop session correlation 與穩定狀態。Agent 啟動時會從 macOS Keychain、Windows Credential Manager 或 Linux Secret Service 載入本機 identity；首次執行才產生並安全保存 Node ID、PKCS#8 private key 與 certificate，平台 store 不可用時不會退回明文檔案或 SQLite。

@@ -2,6 +2,8 @@
 
 原生桌面殼層是 `apps/desktop` 的 Tauri 2 application。它只負責原生視窗與程序生命週期；所有網路、設定與特權操作仍由 Agent/Helper 執行。
 
+發行檔案依專案的 `MIT OR Apache-2.0` 雙重授權提供；請在再發布套件時一併保留根目錄的 `LICENSE.md`、`LICENSE-MIT` 與 `LICENSE-APACHE`。
+
 ## 開發
 
 ```sh
