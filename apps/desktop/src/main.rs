@@ -1,3 +1,5 @@
+//! `NetTool` 的 Tauri 原生桌面殼層與 runtime process lifecycle。
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::net::TcpStream;

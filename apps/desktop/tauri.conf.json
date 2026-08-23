@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.nettool.desktop",
   "build": {
-    "frontendDist": "../../gui/ui"
+    "frontendDist": "../gui/ui"
   },
   "app": {
     "security": {
@@ -14,6 +14,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg", "deb", "appimage", "msi"],
+    "icon": ["icons/icon.svg"],
     "category": "Utility",
     "shortDescription": "Cross-platform network engineering toolkit",
     "longDescription": "Network profiles, diagnostics, packet analysis and controlled speed testing through the NetTool Agent."

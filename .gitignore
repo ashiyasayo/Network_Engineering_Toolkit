@@ -1,5 +1,6 @@
 /target/
 .codebase-memory/
+apps/desktop/gen/
 *.DS_Store
 *.pcap
 *.pcapng
