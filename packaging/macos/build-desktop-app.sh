@@ -2,7 +2,7 @@
 # Build a native macOS app bundle. Signing/notarization are explicit release steps.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
-version=${NETTOOL_VERSION:-0.1.0}
+version=${NETTOOL_VERSION:-0.1.1}
 out=${1:-"$root/target/macos"}
 app="$out/NetTool.app"
 cargo build --manifest-path "$root/Cargo.toml" --release -p nettool -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane

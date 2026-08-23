@@ -23,8 +23,8 @@ cargo run -p nettool-desktop
 推送版本 tag 即可觸發 `.github/workflows/release.yml`：
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 GitHub Actions 會在 Ubuntu、macOS、Windows runner 平行產生 AppImage/deb、DMG、MSI，驗證套件內容後建立同名 GitHub **prerelease**，並附上三份授權文件。正式發行前應在 workflow 加入 Apple Developer ID、Windows Authenticode 與 Linux repository signing secrets，完成簽章 gate 後再移除 `--prerelease`；未設定簽章時產物僅適合測試或內部部署。
