@@ -1,0 +1,24 @@
+[package]
+name = "nettool-dpdk-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+links = "nettool_dpdk_shim"
+build = "build.rs"
+
+[features]
+default = []
+ffi-api = []
+native-dpdk = ["ffi-api"]
+
+[build-dependencies]
+cc = "1"
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

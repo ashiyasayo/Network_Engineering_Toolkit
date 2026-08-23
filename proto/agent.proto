@@ -1,0 +1,27 @@
+syntax = "proto3";
+package nettool.agent.v1;
+
+message AgentEnvelope {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  string request_id = 3;
+  oneof payload {
+    ActionRequest request = 10;
+    ActionResponse response = 11;
+  }
+}
+
+message ActionRequest {
+  string action = 1;
+  bytes payload_json = 2;
+  string operation_id = 3;
+  bool dry_run = 4;
+}
+
+message ActionResponse {
+  bool success = 1;
+  bytes data_json = 2;
+  string error_code = 3;
+  string error_message = 4;
+  bool retryable = 5;
+}

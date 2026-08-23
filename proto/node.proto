@@ -1,0 +1,44 @@
+syntax = "proto3";
+package nettool.node.v1;
+
+message Envelope {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  bytes request_id = 3;
+  oneof message {
+    HelloRequest hello_request = 10;
+    HelloResponse hello_response = 11;
+    PairRequest pair_request = 20;
+    PairResponse pair_response = 21;
+    CapabilityRequest capability_request = 30;
+    CapabilityResponse capability_response = 31;
+    PrepareTest prepare_test = 40;
+    PrepareTestResponse prepare_test_response = 41;
+    StartTest start_test = 42;
+    StopTest stop_test = 43;
+    TestStatus test_status = 44;
+    TestResult test_result = 45;
+    TestResultRequest test_result_request = 46;
+    Ping ping = 50;
+    Pong pong = 51;
+    ProtocolError error = 100;
+  }
+}
+
+message HelloRequest { bytes node_id = 1; string node_name = 2; uint32 min_minor = 3; uint32 max_minor = 4; }
+message HelloResponse { uint32 selected_minor = 1; bytes node_id = 2; string node_name = 3; }
+message PairRequest { bytes node_id = 1; bytes public_key = 2; }
+message PairResponse { bool trusted = 1; string fingerprint = 2; }
+message CapabilityRequest {}
+message CapabilityResponse { repeated Capability capabilities = 1; }
+message Capability { uint32 id = 1; uint32 min_version = 2; uint32 max_version = 3; bool available = 4; }
+message PrepareTest { bytes session_id = 1; string operation_id = 2; string test_type = 3; string backend = 4; string direction = 5; uint64 duration_ms = 6; uint64 warmup_ms = 7; uint64 cooldown_ms = 8; uint32 streams = 9; uint32 frame_size = 10; uint32 payload_size = 11; uint64 target_rate_bps = 12; uint32 mtu = 13; uint32 source_data_port = 14; uint32 receive_data_port = 15; }
+message PrepareTestResponse { bool ready = 1; uint32 data_port = 2; string authorization_tag = 3; uint32 source_data_port = 4; }
+message StartTest { bytes session_id = 1; string operation_id = 2; }
+message StopTest { bytes session_id = 1; string operation_id = 2; }
+message TestStatus { bytes session_id = 1; string state = 2; }
+message TestResult { bytes session_id = 1; bytes result_json = 2; bytes checksum = 3; }
+message TestResultRequest { bytes session_id = 1; }
+message Ping { uint64 nonce = 1; }
+message Pong { uint64 nonce = 1; }
+message ProtocolError { string code = 1; string message = 2; bool retryable = 3; }

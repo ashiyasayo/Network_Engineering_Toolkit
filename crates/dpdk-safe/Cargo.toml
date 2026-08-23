@@ -1,0 +1,23 @@
+[package]
+name = "nettool-dpdk-safe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+ffi-api = ["nettool-dpdk-sys/ffi-api"]
+native-dpdk = ["ffi-api", "nettool-dpdk-sys/native-dpdk"]
+
+[dependencies]
+nettool-dpdk-sys = { path = "../dpdk-sys" }
+nettool-error = { path = "../error" }
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

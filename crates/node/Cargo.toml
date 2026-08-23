@@ -1,0 +1,28 @@
+[package]
+name = "nettool-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+nettool-domain = { path = "../domain" }
+nettool-error = { path = "../error" }
+nettool-node-protocol = { path = "../node-protocol" }
+nettool-resource = { path = "../resource" }
+nettool-speed = { path = "../speed" }
+rustls.workspace = true
+rustls-pki-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+x509-parser.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rcgen = "0.14"

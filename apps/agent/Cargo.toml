@@ -1,0 +1,40 @@
+[package]
+name = "nettool-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+ffi-api = ["nettool-backend-dpdk/ffi-api"]
+native-dpdk = ["ffi-api", "nettool-backend-dpdk/native-dpdk"]
+
+[dependencies]
+nettool-action = { path = "../../crates/action" }
+nettool-agent-client = { path = "../../crates/agent-client" }
+nettool-agent-protocol = { path = "../../crates/agent-protocol" }
+nettool-backend-dpdk = { path = "../../crates/backend-dpdk" }
+nettool-backend-pcap = { path = "../../crates/backend-pcap" }
+nettool-backend-af-xdp = { path = "../../crates/backend-af-xdp" }
+nettool-backend-rio = { path = "../../crates/backend-rio" }
+nettool-benchmark = { path = "../../crates/benchmark" }
+nettool-domain = { path = "../../crates/domain" }
+nettool-error = { path = "../../crates/error" }
+nettool-identity = { path = "../../crates/identity" }
+nettool-helper-protocol = { path = "../../crates/helper-protocol" }
+nettool-node = { path = "../../crates/node" }
+nettool-node-protocol = { path = "../../crates/node-protocol" }
+nettool-packet = { path = "../../crates/packet" }
+nettool-storage = { path = "../../crates/storage" }
+nettool-speed = { path = "../../crates/speed" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+
+[lints]
+workspace = true

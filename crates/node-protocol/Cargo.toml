@@ -1,0 +1,16 @@
+[package]
+name = "nettool-node-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nettool-error = { path = "../error" }
+prost.workspace = true
+serde.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true
+

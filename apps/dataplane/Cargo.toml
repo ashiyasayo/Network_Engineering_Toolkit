@@ -1,0 +1,24 @@
+[package]
+name = "nettool-dataplane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+ffi-api = ["nettool-backend-dpdk/ffi-api", "nettool-dpdk-safe/ffi-api"]
+native-dpdk = ["ffi-api", "nettool-backend-dpdk/native-dpdk", "nettool-dpdk-safe/native-dpdk"]
+
+[dependencies]
+nettool-backend-dpdk = { path = "../../crates/backend-dpdk" }
+nettool-backend-pcap = { path = "../../crates/backend-pcap" }
+nettool-domain = { path = "../../crates/domain" }
+nettool-error = { path = "../../crates/error" }
+nettool-packet = { path = "../../crates/packet" }
+nettool-dpdk-safe = { path = "../../crates/dpdk-safe" }
+nettool-platform-affinity = { path = "../../crates/platform-affinity" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

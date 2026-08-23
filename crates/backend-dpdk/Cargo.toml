@@ -1,0 +1,20 @@
+[package]
+name = "nettool-backend-dpdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+ffi-api = ["nettool-dpdk-safe/ffi-api"]
+native-dpdk = ["ffi-api", "nettool-dpdk-safe/native-dpdk"]
+
+[dependencies]
+nettool-benchmark = { path = "../benchmark" }
+nettool-domain = { path = "../domain" }
+nettool-error = { path = "../error" }
+nettool-dpdk-safe = { path = "../dpdk-safe" }
+
+[lints]
+workspace = true
