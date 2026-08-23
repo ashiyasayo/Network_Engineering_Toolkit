@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -21,6 +22,7 @@ const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_HTTP_BODY_BYTES: usize = 48 * 1024;
 const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1:8765";
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+static HEALTH_PATH: OnceLock<String> = OnceLock::new();
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 
@@ -40,6 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("NETTOOL_GUI_LISTEN must bind to a loopback address".into());
     }
     let listener = TcpListener::bind(address).await?;
+    let _ = HEALTH_PATH
+        .set(std::env::var("NETTOOL_GUI_HEALTH_PATH").unwrap_or_else(|_| "/health".to_owned()));
     eprintln!("nettool-gui listening on http://{address}");
     loop {
         let (stream, _) = listener.accept().await?;
@@ -133,10 +137,10 @@ struct HttpResponse {
 }
 
 async fn route(request: HttpRequest) -> HttpResponse {
+    if request.method == "GET" && HEALTH_PATH.get().is_some_and(|path| path == &request.path) {
+        return json_response("200 OK", json!({"service":"nettool-gui","status":"ok"}));
+    }
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/health") => {
-            json_response("200 OK", json!({"service":"nettool-gui","status":"ok"}))
-        }
         ("GET", "/" | "/index.html") => text_response(
             "200 OK",
             "text/html; charset=utf-8",

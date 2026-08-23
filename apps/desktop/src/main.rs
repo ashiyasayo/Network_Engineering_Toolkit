@@ -3,17 +3,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::path::PathBuf;
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
 struct RuntimeProcesses(Mutex<Vec<Child>>);
+static HEALTH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn sibling_binary(name: &str) -> Option<PathBuf> {
+fn health_token() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |value| value.as_nanos());
+    let counter = HEALTH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{timestamp:032x}-{counter:016x}")
+}
+
+fn sibling_binary(name: &str, resource_dir: Option<&Path>) -> Option<PathBuf> {
     let current = std::env::current_exe().ok()?;
     let parent = current.parent()?;
     let filename = if cfg!(windows) {
@@ -21,17 +31,22 @@ fn sibling_binary(name: &str) -> Option<PathBuf> {
     } else {
         name.to_owned()
     };
-    let candidates = [
+    let mut candidates = Vec::with_capacity(7);
+    if let Some(resource_dir) = resource_dir {
+        candidates.push(resource_dir.join(&filename));
+        candidates.push(resource_dir.join("resources").join(&filename));
+    }
+    candidates.extend([
         parent.join(&filename),
         parent.join("resources").join(&filename),
         parent.join("../Resources").join(&filename),
         parent.join("../resources").join(&filename),
         parent.join("../lib/nettool").join(&filename),
-    ];
+    ]);
     candidates.into_iter().find(|path| path.is_file())
 }
 
-fn configured_binary(name: &str) -> Result<PathBuf, String> {
+fn configured_binary(name: &str, resource_dir: Option<&Path>) -> Result<PathBuf, String> {
     let variable = format!("NETTOOL_{}_BINARY", name.replace('-', "_").to_uppercase());
     if let Ok(value) = std::env::var(&variable) {
         let path = PathBuf::from(value);
@@ -40,16 +55,20 @@ fn configured_binary(name: &str) -> Result<PathBuf, String> {
         }
         return Err(format!("{variable} does not point to a file"));
     }
-    sibling_binary(name).ok_or_else(|| format!("cannot locate bundled {name} binary"))
+    sibling_binary(name, resource_dir).ok_or_else(|| format!("cannot locate bundled {name} binary"))
 }
 
-fn spawn_runtime() -> Result<Vec<Child>, String> {
-    let agent = configured_binary("nettool-agent")?;
-    let gui = configured_binary("nettool-gui")?;
-    let dataplane = configured_binary("nettool-dataplane")?;
-    if TcpStream::connect(("127.0.0.1", 8765)).is_ok() {
-        return Err("NetTool GUI port 8765 is already in use".to_owned());
-    }
+fn spawn_runtime(resource_dir: Option<&Path>) -> Result<(Vec<Child>, SocketAddr, String), String> {
+    let agent = configured_binary("nettool-agent", resource_dir)?;
+    let gui = configured_binary("nettool-gui", resource_dir)?;
+    let dataplane = configured_binary("nettool-dataplane", resource_dir)?;
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("cannot reserve GUI loopback port: {error}"))?;
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("cannot read reserved GUI port: {error}"))?;
+    drop(listener);
+    let health_path = format!("/health-{}", health_token());
     let mut children = Vec::with_capacity(2);
     let agent_child = Command::new(agent)
         .env("NETTOOL_DATAPLANE_BIN", &dataplane)
@@ -60,7 +79,8 @@ fn spawn_runtime() -> Result<Vec<Child>, String> {
         .map_err(|error| format!("cannot start nettool-agent: {error}"))?;
     children.push(agent_child);
     match Command::new(gui)
-        .env("NETTOOL_GUI_LISTEN", "127.0.0.1:8765")
+        .env("NETTOOL_GUI_LISTEN", address.to_string())
+        .env("NETTOOL_GUI_HEALTH_PATH", &health_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -75,17 +95,20 @@ fn spawn_runtime() -> Result<Vec<Child>, String> {
             return Err(format!("cannot start nettool-gui: {error}"));
         }
     }
-    Ok(children)
+    Ok((children, address, health_path))
 }
 
-fn gui_health_check() -> bool {
-    let Ok(mut stream) = TcpStream::connect(("127.0.0.1", 8765)) else {
+fn gui_health_check(address: SocketAddr, health_path: &str) -> bool {
+    let Ok(mut stream) = TcpStream::connect(address) else {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
     if stream
-        .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .write_all(
+            format!("GET {health_path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
         .is_err()
     {
         return false;
@@ -98,10 +121,14 @@ fn gui_health_check() -> bool {
     response.starts_with("HTTP/1.1 200 OK") && response.contains("\"service\":\"nettool-gui\"")
 }
 
-fn wait_for_gui(children: &mut [Child]) -> Result<(), String> {
+fn wait_for_gui(
+    children: &mut [Child],
+    address: SocketAddr,
+    health_path: &str,
+) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
-        if gui_health_check() {
+        if gui_health_check(address, health_path) {
             return Ok(());
         }
         if children
@@ -128,8 +155,10 @@ fn stop_runtime(processes: &RuntimeProcesses) {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let mut processes = spawn_runtime().map_err(std::io::Error::other)?;
-            if let Err(error) = wait_for_gui(&mut processes) {
+            let resource_dir = app.path().resource_dir().ok();
+            let (mut processes, address, health_path) =
+                spawn_runtime(resource_dir.as_deref()).map_err(std::io::Error::other)?;
+            if let Err(error) = wait_for_gui(&mut processes, address, &health_path) {
                 for child in &mut processes {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -139,7 +168,7 @@ fn main() {
             let window = WebviewWindowBuilder::new(
                 app,
                 "main",
-                WebviewUrl::External("http://127.0.0.1:8765".parse().expect("valid GUI URL")),
+                WebviewUrl::External(format!("http://{address}").parse().expect("valid GUI URL")),
             )
             .title("NetTool")
             .inner_size(1440.0, 960.0)
