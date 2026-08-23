@@ -1,0 +1,96 @@
+name: Release desktop packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bundles: appimage,deb
+            files: |
+              target/release/bundle/**/*.AppImage
+              target/release/bundle/**/*.deb
+          - os: macos-latest
+            bundles: dmg
+            files: target/release/bundle/**/*.dmg
+          - os: windows-latest
+            bundles: msi
+            files: target/release/bundle/**/*.msi
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2'
+      - name: Build release sidecars
+        run: cargo build --release -p nettool -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane
+      - name: Stage Unix Tauri resources
+        if: runner.os != 'Windows'
+        run: ./packaging/prepare-tauri-resources.sh
+      - name: Stage Windows Tauri resources
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force apps/desktop/resources | Out-Null
+          foreach ($name in @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe')) {
+            Copy-Item "target/release/$name" "apps/desktop/resources/$name" -Force
+          }
+      - name: Build Tauri packages
+        run: cd apps/desktop && cargo tauri build --bundles ${{ matrix.bundles }}
+      - name: Verify expected package files
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eu
+          for name in nettool nettool-agent nettool-gui nettool-dataplane; do
+            find target/release/bundle -type f -name "$name" -print -quit | grep -q .
+          done
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            test "$(find target/release/bundle -type f -name '*.AppImage' | wc -l)" -ge 1
+            test "$(find target/release/bundle -type f -name '*.deb' | wc -l)" -ge 1
+          else
+            test "$(find target/release/bundle -type f -name '*.dmg' | wc -l)" -ge 1
+          fi
+      - name: Verify Windows package files
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($name in @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe')) {
+            if (-not (Get-ChildItem target/release/bundle -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
+          }
+          if (-not (Get-ChildItem target/release/bundle -Recurse -File -Filter *.msi)) { throw 'missing MSI package' }
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nettool-${{ matrix.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-files/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "NetTool $GITHUB_REF_NAME"
