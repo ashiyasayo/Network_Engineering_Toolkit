@@ -2,6 +2,14 @@
 
 ## GUI
 
+正式原生桌面殼層：
+
+```bash
+cargo run -p nettool-desktop
+```
+
+`nettool-desktop` 會啟動同一套 `nettool-agent` 與 loopback-only `nettool-gui`，再建立 Tauri 2 原生 WebView 視窗；它不直接執行網路或特權操作。發行與安裝流程請參考 [packaging README](../packaging/README.md)。
+
 啟動 loopback-only Dashboard：
 
 ```bash

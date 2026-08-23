@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$allowed = @("nettool.exe", "nettool-agent.exe", "nettool-gui.exe", "nettool-dataplane.exe")
+$allowed = @("nettool.exe", "nettool-agent.exe", "nettool-gui.exe", "nettool-dataplane.exe", "nettool-desktop.exe")
 $source = (Resolve-Path -LiteralPath $SourceDirectory).Path
 $parent = Split-Path -Parent $InstallDirectory
 $stage = Join-Path $parent ("NetTool.staging." + [Guid]::NewGuid().ToString("N"))

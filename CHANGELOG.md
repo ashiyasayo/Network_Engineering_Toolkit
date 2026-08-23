@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增 Tauri 2 `nettool-desktop` 原生桌面殼層，統一管理 Agent、GUI backend 與原生 WebView 視窗。
+- 新增 macOS `.app`、Windows release staging、Linux desktop staging 與跨平台安裝說明；正式發行仍需平台簽章與 notarization。
 - 新增 Network Profile metadata 的 `profile create/show/list/delete` CLI/Agent actions，保存 revision 1 configuration 與 SHA-256 checksum；`profile apply/confirm/rollback` 已經由 authenticated Helper Safe Apply client 執行，平台 adapter 仍依作業系統逐步補齊。
 - 新增 `profile edit/export/import`，edit 建立新的 checksum-protected SQLite revision，export/import 使用 `nettool.profile.v1` JSON 文件。
 - 新增 `hosts add/remove`，Agent 僅解析指定 managed section，再透過 authenticated Helper atomic replace 更新，保留區塊外 hosts 內容。

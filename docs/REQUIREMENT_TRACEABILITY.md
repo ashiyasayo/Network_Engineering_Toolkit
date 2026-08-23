@@ -7,6 +7,7 @@
 | 規格項目 | 主要實作 | 自動化證據 | 狀態 |
 | --- | --- | --- | --- |
 | Agent/GUI/CLI typed Action | `crates/action`、`apps/agent`、`apps/cli`、`apps/gui` | workspace tests、Action registry uniqueness | 已完成（實機 GUI 待驗） |
+| Native desktop shell / installer | `apps/desktop`、`packaging/{macos,windows,linux}` | Tauri config、固定 allowlist staging scripts、平台 release dry-run | 殼層與 staging 完成；簽章、notarization、平台實機待驗 |
 | Profile / Hosts / Safe Apply | `crates/storage`、`crates/helper-core`、`crates/helper-server` | storage/helper tests、rollback/idempotency tests | 已完成（平台實機待驗） |
 | Node mTLS / trust reload | `crates/node`、`crates/storage`、`apps/agent` | Node protocol/Agent integration tests | 已完成 |
 | Out-of-band fingerprint pairing | CLI `--confirm-fingerprint`、GUI checkbox、Storage gate | `rejects_pairing_without_out_of_band_fingerprint_confirmation` | 已完成 |

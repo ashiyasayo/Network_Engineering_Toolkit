@@ -17,6 +17,9 @@
 - Linux AF_XDP、DPDK、Windows RIO、平台 ACL/installer 與 100GbE certification 仍需相應 OS、NIC、SDK、driver 與實驗室 runner；本機 macOS ARM 沒有 Linux target 或 Windows toolchain。
 - 新增 `docs/HARDWARE_ACCEPTANCE.md`，固定 Linux AF_XDP/DPDK、Windows RIO/helper 與 100GbE A–J gate 的交接命令、pass/fail evidence 與禁止誤標 Certified 的規則。
 - Ubuntu CI 的 loopback job 已加入 Agent ignored integration test，與 speed/Node tests 一起驗證 mTLS、SQLite persistence 與 dynamic TCP/UDP lifecycle。
+- 新增 Tauri 2 `nettool-desktop` 原生殼層：啟動並管理 Agent/GUI backend，於原生 WebView 顯示既有 Action API Dashboard；不直接執行網路或特權操作。
+- 新增 macOS `.app`、Windows release staging、Linux desktop staging 與 desktop entry 安裝資產；正式簽章、notarization、平台實機 ACL 與發行 runner 仍待驗。
+- 本機無網路且 Cargo cache 沒有 `tauri` crate，`cargo check -p nettool-desktop --offline` 因缺少 crates.io `tauri` 明確失敗；格式、shell 語法、Tauri JSON 設定與 diff check 已通過。
 
 ## 最近驗證
 

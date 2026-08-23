@@ -1,6 +1,6 @@
 # Architecture
 
-本專案採五程序架構：`nettool-gui` 與 CLI 經本機 IPC 呼叫唯一 runtime authority `nettool-agent`；特權操作限定於 whitelist-only helper；高速工作由獨立 `nettool-dataplane` 執行。GUI 目前是 loopback-only localhost view，原生桌面殼層可在不改變 Action/API 邊界下替換。
+本專案採六程序架構：`nettool-desktop` 是 Tauri 2 原生殼層，啟動並管理 `nettool-agent` 與 loopback-only `nettool-gui`；GUI 與 CLI 經本機 IPC 呼叫唯一 runtime authority `nettool-agent`；特權操作限定於 whitelist-only helper；高速工作由獨立 `nettool-dataplane` 執行。原生殼層只負責 WebView、程序生命週期與視窗，不直接執行網路或特權操作。
 
 依賴方向保持由應用層指向 action、domain、storage 與 backend；domain 不依賴 OS API 或資料平面實作。
 

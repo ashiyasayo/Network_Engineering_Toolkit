@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NetTool
+Comment=Network engineering toolkit
+Exec=/opt/nettool/nettool-desktop
+Icon=network-workgroup
+Terminal=false
+Categories=Network;Utility;

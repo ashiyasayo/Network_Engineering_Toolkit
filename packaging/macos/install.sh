@@ -9,7 +9,7 @@ case "$prefix" in
   * ) echo "prefix must be an absolute path" >&2; exit 2 ;;
 esac
 
-allowed="nettool nettool-agent nettool-gui nettool-dataplane"
+allowed="nettool nettool-agent nettool-gui nettool-dataplane nettool-desktop"
 stage="${prefix}.staging.$$"
 backup="${prefix}.backup.$(date +%Y%m%d%H%M%S)"
 old_moved=0

@@ -2,6 +2,8 @@
 
 `nettool-helper` 必須安裝為 root-owned `/usr/libexec/nettool-helper`，並由 systemd unit 啟動。安裝程式需完成：
 
+桌面 shell 可由 `install-desktop.sh --source-directory <release-dir> --dry-run` 驗證，移除 `--dry-run` 後安裝至 `/opt/nettool` 並註冊 `/usr/share/applications/nettool.desktop`。此步驟不會以 root 執行 GUI；root 權限只用於安裝檔案，特權網路操作仍由獨立 helper 負責。
+
 1. 透過 `nettool-helper.sysusers` 建立 `nettool` system group。
 2. 將實際執行 `nettool-agent` 的帳號加入 `nettool` group。
 3. 將 `nettool-helper.env.example` 複製為 `/etc/nettool/helper.env`，把 `NETTOOL_AGENT_UID` 設為該帳號的數字 UID；不得保留範例值。
