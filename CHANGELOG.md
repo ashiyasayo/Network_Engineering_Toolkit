@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Linux 唯讀 NIC 探測新增 `bus_type`（`usb`、`pci`、`unknown`）；只有合法 PCI BDF 才填入 `pci_address`，並將結果帶到 `interface.list/show`、`dataplane.probe`、`perf.topology` 與 `nettool-dataplane probe`。這不包含 USB hot-plug、auto-provision 或實體硬體驗收。
 - 依 2026-08-24 設計分析拆分 Agent runtime action modules（profile、hosts、node、perf 等）、Node TCP/UDP/bidirectional prepare modules，以及 Helper macOS/Windows platform modules；外部 Action/CLI wire contract 維持不變。
 - Storage production crate 不再依賴 `nettool-benchmark` evaluator；benchmark evaluation 改由 application layer 完成，Storage 只接受明確 `BenchmarkCertificationState` 與 caller checksum，並驗證 canonical artifact checksum、platform hash 與 SQLite invariants。
 - Domain 的 capability parameters、speed result 與 benchmark profile parameters 改用 `ValidatedJson` opaque object wrapper；新增 RIO/platform-auth 的明確 unsafe lint 邊界。

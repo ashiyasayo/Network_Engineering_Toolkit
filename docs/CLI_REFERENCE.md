@@ -78,7 +78,7 @@ Agent 會依 SQLite session record 找到 paired remote Node，透過 mutual TLS
 
 ## `nettool perf topology`
 
-透過 Agent 顯示 CPU logical count、NUMA、Huge Pages，以及每張 NIC 的 PCI address、link speed、NUMA node、RX/TX queues 與 driver。無法驗證的欄位保留 `null` 並附 warning，不填入推測值。
+透過 Agent 顯示 CPU logical count、NUMA、Huge Pages，以及每張 NIC 的 bus type、PCI address、link speed、NUMA node、RX/TX queues 與 driver。`bus_type` 僅接受 `usb`、`pci`、`unknown`；無法驗證的 PCI address 保留 `null` 並附 warning，不填入推測值。
 
 ## `nettool perf backend`
 
@@ -98,7 +98,7 @@ Agent 會依 SQLite session record 找到 paired remote Node，透過 mutual TLS
 
 ## `nettool-dataplane probe`
 
-探測平台、CPU、NUMA、Huge Page、NIC、queue、驅動與資料平面能力，不修改系統。
+探測平台、CPU、NUMA、Huge Page、NIC、queue、驅動、NIC bus type 與資料平面能力，不修改系統。Linux 依 sysfs device path 判定 `usb`、`pci` 或 `unknown`；USB 或未知介面不會被填入 PCI address。這是唯讀分類，不代表已完成 USB hot-plug、auto-provision 或真實硬體驗收。
 
 使用 `--output json` 取得 schema `1.0` 的機器可讀輸出。標準輸出只包含成功結果；錯誤以 JSON envelope 寫到標準錯誤並回傳 exit code 2。
 
@@ -136,7 +136,7 @@ Native DPDK build 亦可使用 `nettool-dataplane capture --backend dpdk --inter
 
 Agent 管理的 capture lifecycle 可使用 `nettool packet capture start --interface <id> --output <directory> --bursts <n> [--backend dpdk] [--protocol ...] [--source-ip ...] [--destination-ip ...] [--source-port ...] [--destination-port ...]`，回傳持久化 session ID；以 `nettool packet capture stop <session-id>` 停止仍由 Agent 擁有的 worker。Agent 會回收正常結束的 dataplane process 並保存 `packet_session` 終態；沒有可執行的 native dataplane binary 時明確回傳 `DATAPLANE.BACKEND_NOT_BUILT`。
 
-介面查詢可使用 `nettool interface list`、`nettool interface show <name-or-id>` 與 `nettool interface refresh`；輸出包含 driver、link speed、RX/TX queues 與 NUMA node。Linux 讀取 sysfs；macOS 使用 `/sbin/ifconfig -l`，Windows 使用固定 PowerShell `Get-NetAdapter`，無法由平台 API 證明的欄位會保持 `null`。
+介面查詢可使用 `nettool interface list`、`nettool interface show <name-or-id>` 與 `nettool interface refresh`；輸出包含 `bus_type`、driver、link speed、RX/TX queues 與 NUMA node。Linux 讀取 sysfs，只有合法 PCI BDF 才填入 `pci_address`，USB 或無法判定的 path 會回傳 `bus_type: "unknown"` 或 `"usb"` 並保留 PCI address 為 `null`。macOS 使用 `/sbin/ifconfig -l`，Windows 使用固定 PowerShell `Get-NetAdapter`；這兩個平台目前不從該介面列舉結果推論 USB bus，無法由平台 API 證明的欄位會保持 `null`。
 
 網路設定操作使用 `nettool profile apply <id-or-name> --interface <id> [--confirm-timeout <seconds>]`（`--timeout` 為相容別名），完成後以 `nettool profile confirm <operation-id>` 或 `nettool profile rollback <operation-id>` 結束 Safe Apply；`nettool hosts list` 讀取目前 hosts，`nettool hosts replace <profile-id> '<entries-json>'`、`nettool hosts add <profile-id> <address> <hostname> [comment]`、`nettool hosts remove <profile-id> <hostname>`、`nettool hosts enable <profile-id> <hostname>`、`nettool hosts disable <profile-id> <hostname>`、`nettool hosts backup` 與 `nettool hosts restore` 透過同一 privileged Helper 寫入指定 managed section 或 Helper-owned backup。停用項目以受控 marker 保留，Agent 未設定 `NETTOOL_HELPER_SOCKET` 時會明確回報 unsupported，不會直接執行特權命令。
 ### `speed history`
