@@ -4,24 +4,34 @@
 
 #[cfg(any(unix, windows))]
 mod agent_runtime {
-    #[path = "../action_dispatch.rs"]
-    mod action_dispatch;
-    #[path = "../action_helper.rs"]
-    mod action_helper;
-    #[path = "../action_hosts.rs"]
-    mod action_hosts;
-    #[path = "../action_node.rs"]
-    mod action_node;
-    #[path = "../action_packet.rs"]
-    mod action_packet;
-    #[path = "../action_perf.rs"]
-    mod action_perf;
-    #[path = "../action_persistent.rs"]
-    mod action_persistent;
-    #[path = "../action_profile.rs"]
-    mod action_profile;
-    #[path = "../action_speed.rs"]
-    mod action_speed;
+    // 保留 action 的 runtime namespace，並讓各平台 formatter 以 src 目錄解析來源檔案。
+    mod action_dispatch {
+        include!("action_dispatch.rs");
+    }
+    mod action_helper {
+        include!("action_helper.rs");
+    }
+    mod action_hosts {
+        include!("action_hosts.rs");
+    }
+    mod action_node {
+        include!("action_node.rs");
+    }
+    mod action_packet {
+        include!("action_packet.rs");
+    }
+    mod action_perf {
+        include!("action_perf.rs");
+    }
+    mod action_persistent {
+        include!("action_persistent.rs");
+    }
+    mod action_profile {
+        include!("action_profile.rs");
+    }
+    mod action_speed {
+        include!("action_speed.rs");
+    }
     use action_speed::{parse_node_id, utc_timestamp};
 
     use nettool_action::{ActionRegistry, PermissionRequirement};
