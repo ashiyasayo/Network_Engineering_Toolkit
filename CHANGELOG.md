@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 依 2026-08-24 設計分析拆分 Agent runtime action modules（profile、hosts、node、perf 等）、Node TCP/UDP/bidirectional prepare modules，以及 Helper macOS/Windows platform modules；外部 Action/CLI wire contract 維持不變。
+- Storage production crate 不再依賴 `nettool-benchmark` evaluator；benchmark evaluation 改由 application layer 完成，Storage 只接受明確 `BenchmarkCertificationState` 與 caller checksum，並驗證 canonical artifact checksum、platform hash 與 SQLite invariants。
+- Domain 的 capability parameters、speed result 與 benchmark profile parameters 改用 `ValidatedJson` opaque object wrapper；新增 RIO/platform-auth 的明確 unsafe lint 邊界。
+- Windows state reader 改用固定 PowerShell JSON query 與嚴格 versioned schema；介面 alias 經獨立 argv 傳入、query 明確輸出無 BOM UTF-8 並 fail closed，`netsh.exe` 僅保留 apply builder。Agent/Helper/GUI 長駐入口新增 stderr `tracing` 與 `RUST_LOG` correlation 欄位。
+- CI loopback/mTLS ignored suite 改由 Ubuntu、Windows、macOS runner 都執行；三平台實機結果與 100GbE/特權安裝驗收仍未宣稱完成。
+
 ## 0.1.1
 
 - 修正 GitHub Actions 的 Tauri CLI 版本鎖定，讓跨平台桌面套件可以由 `v0.1.1` tag 正常建置。
@@ -52,7 +58,7 @@
 - 新增 `execute_platform_commands` fail-closed 序列執行器：每個 command 在執行前重新驗證，遇到非零結果立即停止後續命令，交由外層 Safe Apply 負責 rollback。
 - Helper core 新增 generic `PlatformNetworkExecutor`：以平台 state reader 組合 fixed-argv apply、typed snapshot、read-back verify 與 helper-owned restore；Windows OS state reader 與兩平台 privileged service wiring 仍待平台實機整合。
 - 新增 macOS `networksetup` state reader：解析 IPv4/IPv6、DNS 與 MTU，對非連續 subnet、未知輸出與不可表示 gateway fail closed。
-- 新增 Windows `netsh.exe` state reader：解析 IPv4/IPv6 DHCP/static、DNS 與 MTU，對未知語系格式與不可表示 gateway fail closed。
+- 新增 Windows state reader：以固定 PowerShell JSON schema 解析 IPv4/IPv6 DHCP/static、DNS 與 MTU，對 malformed/未知 schema、不可表示 gateway/routes 與超量 DNS fail closed。
 - Unix helper service 已在 macOS 分支接上 `PlatformNetworkExecutor` 與 `networksetup` reader，共用 authenticated IPC、Safe Apply watchdog 與 rollback；Windows Named Pipe helper runtime 仍待完成。
 - 新增 Windows helper Named Pipe runtime：使用 kernel token SID allowlist、bounded request timeout、Safe Apply watchdog、Windows `netsh` executor 與 helper-owned snapshots；Windows target cross-compile 仍受目前環境無法下載 `windows-sys` 限制。
 - Windows helper 已補上 Hosts managed-section replace，並透過 `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)` 封裝 atomic replacement，避免既有 hosts 檔案在 Windows 上因 rename 不覆寫而失敗。
@@ -99,7 +105,7 @@
 - 新增 read-only `speed history` Action/CLI，回傳 bounded、非敏感的 SQLite session summaries。
 - 新增 `packet analyze --input` Agent action，重用 bounded offline PCAP/PCAPNG worker 並回傳 coverage、drop 與統計資料。
 - 新增 Linux `packet stats`，回傳指定或全部介面的 kernel RX/TX counters 與 dropped counters，非 Linux 明確回報 unsupported。
-- CI 跨平台矩陣保留 Ubuntu loopback integration tests，macOS/Windows 執行完整 non-ignored workspace lint/test，避免把 Unix-only socket 測試誤當成跨平台通過。
+- CI 跨平台矩陣在 Ubuntu、macOS、Windows 都執行 loopback integration tests；硬體與特權 helper 實機驗收仍另行處理。
 - 新增 `interface list/show/refresh` CLI/Agent read-only actions，回傳 NIC driver、link speed、queue 與 NUMA metadata。
 - Profile apply/confirm/rollback 與 Hosts list/replace 已接上 `NETTOOL_HELPER_SOCKET` 的 authenticated privileged Helper client；缺少 Helper transport 時明確 fail closed。
 - `speed.run` 現在支援 socket upload、TCP/UDP download 與 TCP/UDP bidirectional 的實際 Agent lifecycle：remote Prepare、共同 scheduled Start、並行 authorized TCP/UDP sender/receiver、ResultQuery 與 sender 失敗時的取消清理；raw 與 accelerated executor 仍明確回報 unsupported。

@@ -1,8 +1,20 @@
 # Architecture
 
-本專案採六程序架構：`nettool-desktop` 是 Tauri 2 原生殼層，啟動並管理 `nettool-agent` 與 loopback-only `nettool-gui`；GUI 與 CLI 經本機 IPC 呼叫唯一 runtime authority `nettool-agent`；特權操作限定於 whitelist-only helper；高速工作由獨立 `nettool-dataplane` 執行。原生殼層只負責 WebView、程序生命週期與視窗，不直接執行網路或特權操作。
+本文件說明程序責任、資料流、信任邊界與 backend 可用性判定。快速開始與文件索引請參閱 [README](../README.md)，命令與輸出格式請參閱 [CLI Reference](CLI_REFERENCE.md)。
+
+## 程序責任
+
+| 程序 | 主要責任 | 明確不負責 |
+| --- | --- | --- |
+| `nettool-agent` | 唯一 runtime authority、Action API、SQLite metadata、Node control 與 session coordination | 直接執行特權 OS 命令 |
+| `nettool` / `nettool-gui` | CLI、loopback Dashboard 與使用者操作介面 | 直接修改網路設定或執行 dataplane |
+| `nettool-desktop` | Tauri 2 WebView、程序生命週期與原生視窗 | 直接執行網路或特權操作 |
+| `nettool-helper` | authenticated privileged action、Safe Apply、Hosts 與平台 adapter | 接受未驗證的 caller 身分或任意 command |
+| `nettool-dataplane` | probe、socket/backend worker、封包分析與硬體 evidence | 取代 Agent 的 trust、session 或設定權限 |
 
 依賴方向保持由應用層指向 action、domain、storage 與 backend；domain 不依賴 OS API 或資料平面實作。
+
+## 控制平面
 
 目前控制平面：
 
@@ -15,11 +27,30 @@ nettool CLI → agent-client → Unix socket / Windows Named Pipe → nettool-ag
 
 IPC 使用四位元組 big-endian 長度加 Protobuf envelope，單一 frame 上限 1 MiB。Agent socket 設為 user-only；SQLite 啟用 foreign key 與 WAL，且 schema 不包含私鑰或封包 payload 欄位。
 
+## Runtime module seams
+
+`nettool-agent` 的 runtime authority 仍集中在同一個 process，但 implementation 已依責任拆成較深的內部 module：
+
+- `action_dispatch` 只負責 action routing、response envelope 與 dry-run decision。
+- `action_packet`、`action_speed`、`action_profile`、`action_hosts`、`action_node` 與 `action_perf` 分別隱藏各 action domain；`action_persistent` 只保留 system/interface read path，`action_helper` 只保留 network helper transport。
+- `SessionCoordinator` 的 TCP、TCP bidirectional、UDP、UDP bidirectional prepare implementation 各自位於獨立 module；coordinator 本身保留 lifecycle、resource ownership 與 result state machine。
+- Helper network executor 將 macOS `networksetup` reader/builder 與 Windows PowerShell JSON state reader、`netsh.exe` apply builder 放在獨立 platform module；Windows query 另固定無 BOM UTF-8 stdout，shared executor 只處理 typed snapshot、fixed-argv validation、verify 與 restore。
+
+這些都是 process 內部 seam，不擴大 wire protocol surface；caller 仍只需要學習 Agent Action interface、Node session interface 或 Helper Safe Apply interface。
+
+## Capability、implementation 與 runtime gate
+
+三種狀態必須分開處理：platform/kernel capability 只表示系統表面存在，implementation availability 表示對應程式碼與 native SDK 已連結，runtime gate 則表示目前介面、driver、queue、權限與資源檢查均通過。任何一層未通過都不得產生可執行或認證成功的假結果。
+
+- 預設 build 不宣稱 DPDK、RIO 或 accelerated speed executor 可用；`native-dpdk` 與 `pkg-config libdpdk` 是 DPDK native path 的必要條件。
+- Linux AF_XDP 的 implementation 可編譯不代表 zero-copy driver、interface 或 queue preflight 已通過；RIO 同樣必須同時符合 Windows platform 與 implementation gate。
+- `100G Certified` 需要完整 hardware evidence、核准 policy 與 A–J gates 全部通過；未完成真實硬體 POC 時最高只能呈現較低的驗證狀態。
+
 Node identity 由獨立 Identity crate 管理。Production store 直接使用平台 native credential backend（macOS Keychain、Windows Credential Manager、Linux Secret Service），不存在一般檔案或 SQLite fallback。首次啟動以 CSPRNG 建立非零 128-bit Node ID，並產生 PKCS#8 asymmetric key 與含 SAN 的 certificate；credential blob 使用 bounded、versioned binary envelope。每次載入會驗證 header/length、X.509 DER、PKCS#8 DER，以及 certificate public key 與 private key 是否相符。Agent 在開啟 IPC listener 前載入此 material，store 鎖定、損壞或不可用會使啟動失敗。
 
 Safe Apply deadline 與 snapshot ID 由 helper-owned state 保存。寫入流程使用暫存檔、`fsync` 與 atomic rename；即使 Agent 終止，helper 重新啟動後仍可查出 pending operation 並依 deadline rollback。Desired state 是拒絕未知欄位的 typed schema；相同 operation request 可冪等重送，不同 payload 重用 ID 或 deadline 後 confirm 會拒絕。
 
-Linux Ethernet executor 使用明確設定的 absolute `nmcli` path，不依賴 privileged process 的 `PATH`，且只以 `Command + argv` 呼叫 NetworkManager，不經 shell。Snapshot 以 active connection UUID 讀取 IPv4/IPv6、DNS、routes 與 MTU properties，原子持久化後才允許 modify/activate；apply 後逐欄讀回驗證，rollback 由 snapshot 還原並重新 activate。Helper core 另提供 generic `PlatformNetworkExecutor`，集中 fixed-argv、typed snapshot、verify 與 restore；macOS `networksetup` 與 Windows `netsh` 已有 fail-closed state reader、command executor、Safe Apply wiring，Windows Named Pipe 另以 token SID allowlist 建立 authenticated boundary。兩平台正式簽章、實機 ACL/rollback 驗收與完整發行 installer 仍待完成，因此目前不標示 production-ready。
+Linux Ethernet executor 使用明確設定的 absolute `nmcli` path，不依賴 privileged process 的 `PATH`，且只以 `Command + argv` 呼叫 NetworkManager，不經 shell。Snapshot 以 active connection UUID 讀取 IPv4/IPv6、DNS、routes 與 MTU properties，原子持久化後才允許 modify/activate；apply 後逐欄讀回驗證，rollback 由 snapshot 還原並重新 activate。Helper core 另提供 generic `PlatformNetworkExecutor`，集中 fixed-argv、typed snapshot、verify 與 restore；macOS `networksetup` reader/executor 與 Windows PowerShell JSON state reader、`netsh` fixed-argv apply executor 都已接上 fail-closed Safe Apply wiring，Windows query 固定無 BOM UTF-8 stdout，Windows Named Pipe 另以 token SID allowlist 建立 authenticated boundary。兩平台正式簽章、實機 ACL/rollback 驗收與完整發行 installer 仍待完成，因此目前不標示 production-ready。
 
 `nettool-helper` Unix service 將 authenticated transport、Safe Apply、Hosts managed section 與平台 network executor 串接；Linux 使用 NetworkManager，macOS 使用 `networksetup` fixed-argv reader/executor。啟動時在接受 request 前先恢復所有逾期 operation，運行中每秒檢查 deadline；單一 client exchange 上限兩秒，避免 slow client 阻塞 watchdog。Socket path 若已存在會拒絕啟動，不會任意刪除 filesystem entry。Systemd unit 使用 root user、`nettool` group、`0660` socket、`0700` state directory、filesystem/sysfs write allowlist 與 address-family restriction。
 
@@ -70,7 +101,9 @@ Linux environment collector 直接讀取 `/etc/os-release`、procfs 與 sysfs，
 
 100G evaluator 固定輸出 Gate A–J：Link、NUMA、Queue、Throughput、Drop、CPU、Stability、Thermal、Analyzer 與 Reproducibility。Throughput、drop、duration、analyzer 與 dispersion 門檻只能由已驗證的 POC policy 提供；policy 缺失時相關 gate 為 `not_evaluated`，最高只能顯示 Validated，無效 policy 則明確失敗。Thermal throttling 永遠保存 condition。只有完整環境、明確 policy 且十個 gate 全部 PASS 才能顯示 100G Certified。
 
-Storage 不接受 caller 直接提交 certification state。它在 SQLite transaction 內以前述 environment/evidence/policy 重新評估，保存 canonical JSON 與 length-delimited SHA-256 result checksum；只有 evaluator 回傳 100G Certified 且 caller 提供 certification ID 時，才同時寫入 `hardware_profile`、`benchmark_result` 與 `hardware_certification`。任何一步失敗會回滾全部 rows；同一 hardware profile ID 只能綁定同一平台組合 hash。
+Benchmark evaluator 位於 application/benchmark layer；Storage 不再依賴 evaluator，也不在 transaction 內重新執行 gates。Application layer 先產生 environment JSON、platform combination SHA-256、已驗證 result JSON、明確的 `BenchmarkCertificationState` 與 artifact checksum，再交給 Storage。Storage 只驗證 JSON/hash/checksum 形狀、checksum 是否符合 canonical artifact、certification ID invariant 與 SQLite transaction；只有 `100g_certified` 且有 certification ID 時，才同時寫入 `hardware_profile`、`benchmark_result` 與 `hardware_certification`。任何一步失敗會回滾全部 rows；同一 hardware profile ID 只能綁定同一平台組合 hash。實際硬體 benchmark executor 尚未掛接前，`perf.benchmark` 仍只驗證 plan 並回傳 backend 未建置，不會產生或保存 synthetic certification。
+
+Domain 對 capability parameters、speed result 與 benchmark profile parameters 使用 `ValidatedJson` opaque wrapper。它保留 backend-specific keys 的延伸性，但在 domain deserialize seam 拒絕非 object JSON，避免 scalar/array 直接穿透到核心模型。`dpdk-sys`、`dpdk-safe`、Linux AF_XDP、Windows RIO、Linux affinity 與 Windows `platform-auth` 等 native/FFI crate 以 crate-level lint 明確隔離 unsafe code；其餘純 Rust workspace crate 維持 `unsafe_code = forbid`。
 
 Benchmark runner 是單次使用的 deterministic orchestrator，依固定 phase order 呼叫 backend executor，並以 local monotonic timestamps 保存每一階段。Cancel 只在 phase boundary 生效，已完成 phase 保留、其餘明確標記 skipped。Recoverable issue 繼續、Degraded issue 完成但降低整體狀態、Fatal issue/錯誤立即停止；每個 phase evidence 上限 1 MiB。Runner 不自行 sleep 或產生 throughput，duration 與硬體 I/O 必須由真正 executor 實作。
 

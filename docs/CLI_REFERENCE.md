@@ -1,5 +1,29 @@
 # CLI Reference
 
+本文件整理 CLI、GUI、輸出格式與常用操作；快速開始請參閱 [README](../README.md)，程序與安全邊界請參閱 [Architecture](ARCHITECTURE.md)。除非另有說明，以下 `nettool` 也可用 `cargo run -p nettool --` 執行。
+
+## 啟動本機元件
+
+先啟動 Agent，再從另一個 terminal 執行 CLI 或 GUI：
+
+```bash
+cargo run -p nettool-agent
+cargo run -p nettool -- health --output json
+cargo run -p nettool-gui
+```
+
+正式桌面殼層會管理 Agent 與 GUI backend：
+
+```bash
+cargo run -p nettool-desktop
+```
+
+## 全域選項與輸出
+
+- `--output json` 可用於支援 JSON 的命令；`nettool-dataplane` 的 JSON schema 版本為 `1.0`。
+- 所有 CLI action 都可在命令列任意位置加入 `--dry-run`。Agent 只回傳 bounded plan、權限/冪等性 metadata 與 payload fingerprint，不執行副作用；privileged action 會把 dry-run 交給 Helper 驗證。
+- 成功結果寫到標準輸出；可預期的命令錯誤使用 stable error code。`nettool-dataplane` 的錯誤 envelope 寫到標準錯誤並回傳 exit code `2`。
+
 ## GUI
 
 正式原生桌面殼層：
