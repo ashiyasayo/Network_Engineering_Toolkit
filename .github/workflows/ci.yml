@@ -19,10 +19,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      # Loopback socket integration tests require a Linux runner with local bind permission;
-      # other platforms still compile and run the complete non-ignored suite.
-      - name: Run Linux loopback integration tests
-        if: runner.os == 'Linux'
+      # 只使用 loopback 與 ephemeral port；三平台都必須執行 mTLS/socket regression suite。
+      - name: Run loopback integration tests
         run: |
           cargo test -p nettool-agent --bin nettool-agent -- --ignored
           cargo test -p nettool-speed -- --ignored
