@@ -19,6 +19,30 @@ pub enum Platform {
     Unknown,
 }
 
+/// 網路介面可由平台證據判定的硬體匯流排分類；目前 Linux 提供實際分類。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NicBusType {
+    /// USB 網路介面。
+    Usb,
+    /// PCI 網路介面。
+    Pci,
+    /// 缺少足夠 sysfs 證據，或路徑格式不合法。
+    Unknown,
+}
+
+impl NicBusType {
+    /// 回傳供 CLI 與 JSON 合約使用的穩定英文識別字。
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Usb => "usb",
+            Self::Pci => "pci",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 impl Platform {
     /// 回傳供 CLI 與 JSON 合約使用的穩定英文識別字。
     #[must_use]
@@ -37,8 +61,10 @@ impl Platform {
 pub struct NicProbe {
     /// 作業系統介面名稱。
     pub name: String,
-    /// PCI 位址；平台無法提供時為空值。
+    /// PCI BDF；非 PCI 或無法驗證時為空值。
     pub pci_address: Option<String>,
+    /// 由 sysfs 路徑判定的硬體匯流排；無法安全判定時為未知。
+    pub bus_type: NicBusType,
     /// 目前驅動程式名稱；無法判斷時為空值。
     pub driver: Option<String>,
     /// 連線速率，單位為 Mbps。

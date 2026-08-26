@@ -33,6 +33,7 @@ pub(super) fn execute(action: &str, payload: &[u8], storage: &Storage) -> Action
                 "interfaces": report.nics.iter().map(|nic| json!({
                     "name": nic.name,
                     "pci_address": nic.pci_address,
+                    "bus_type": nic.bus_type,
                     "driver": nic.driver,
                     "link_speed_mbps": nic.link_speed_mbps,
                     "rx_queues": nic.rx_queues,
@@ -61,6 +62,7 @@ pub(super) fn execute(action: &str, payload: &[u8], storage: &Storage) -> Action
                             "interface": {
                                 "name": nic.name,
                                 "pci_address": nic.pci_address,
+                                "bus_type": nic.bus_type,
                                 "driver": nic.driver,
                                 "link_speed_mbps": nic.link_speed_mbps,
                                 "rx_queues": nic.rx_queues,

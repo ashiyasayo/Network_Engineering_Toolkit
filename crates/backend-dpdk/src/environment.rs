@@ -559,6 +559,7 @@ mod tests {
         let nics = vec![NicProbe {
             name: "eth0".to_owned(),
             pci_address: Some("0000:01:00.0".to_owned()),
+            bus_type: nettool_domain::NicBusType::Pci,
             driver: None,
             link_speed_mbps: None,
             rx_queues: None,

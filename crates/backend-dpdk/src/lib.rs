@@ -21,7 +21,7 @@ pub const fn is_backend_built() -> bool {
     nettool_dpdk_safe::is_native_dpdk_built()
 }
 
-use nettool_domain::NicProbe;
+use nettool_domain::{NicBusType, NicProbe};
 use nettool_domain::{Platform, ProbeReport};
 #[cfg(target_os = "linux")]
 use nettool_error::ErrorCode;
@@ -456,6 +456,7 @@ fn probe_platform_interfaces(warnings: &mut Vec<String>) -> Vec<NicProbe> {
         .map(|name| NicProbe {
             name: name.to_owned(),
             pci_address: None,
+            bus_type: NicBusType::Unknown,
             driver: None,
             link_speed_mbps: None,
             rx_queues: None,
@@ -497,6 +498,7 @@ fn probe_platform_interfaces(warnings: &mut Vec<String>) -> Vec<NicProbe> {
         .map(|name| NicProbe {
             name: name.to_owned(),
             pci_address: None,
+            bus_type: NicBusType::Unknown,
             driver: None,
             link_speed_mbps: None,
             rx_queues: None,
@@ -582,14 +584,19 @@ fn probe_linux(warnings: &mut Vec<String>) -> Result<LinuxProbe, NetToolError> {
 #[cfg(target_os = "linux")]
 fn probe_linux_nic(path: &Path) -> NicProbe {
     let device = path.join("device");
+    let device_target = fs::canonicalize(&device).ok();
+    let bus_type = device_target
+        .as_deref()
+        .map_or(NicBusType::Unknown, classify_linux_device_path);
+    let pci_address = device_target
+        .as_deref()
+        .and_then(|target| pci_address_from_device_path(target, bus_type));
     NicProbe {
         name: path
             .file_name()
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
-        pci_address: fs::canonicalize(&device).ok().and_then(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        }),
+        pci_address,
+        bus_type,
         driver: fs::read_link(device.join("driver")).ok().and_then(|path| {
             path.file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -622,6 +629,61 @@ fn count_queues(path: PathBuf, prefix: &str) -> Option<u32> {
             .count();
         u32::try_from(count).ok()
     })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn classify_linux_device_path(path: &Path) -> NicBusType {
+    let components = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str());
+    if components.clone().any(|component| component == "virtual") {
+        return NicBusType::Unknown;
+    }
+    if components.clone().any(is_usb_component) {
+        return NicBusType::Usb;
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| is_valid_pci_bdf(name))
+        .map_or(NicBusType::Unknown, |_| NicBusType::Pci)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_usb_component(component: &str) -> bool {
+    component.strip_prefix("usb").is_some_and(|suffix| {
+        !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit())
+    }) || component.split_once('-').is_some_and(|(bus, port)| {
+        !bus.is_empty()
+            && bus.chars().all(|character| character.is_ascii_digit())
+            && port
+                .split('.')
+                .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_valid_pci_bdf(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 12
+        && bytes[4] == b':'
+        && bytes[7] == b':'
+        && bytes[10] == b'.'
+        && bytes[11].is_ascii_digit()
+        && bytes[11] <= b'7'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7 | 10 | 11) || byte.is_ascii_hexdigit())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn pci_address_from_device_path(path: &Path, bus_type: NicBusType) -> Option<String> {
+    (bus_type == NicBusType::Pci)
+        .then(|| path.file_name())
+        .flatten()
+        .and_then(|name| name.to_str())
+        .filter(|name| is_valid_pci_bdf(name))
+        .map(ToOwned::to_owned)
 }
 
 #[cfg(target_os = "linux")]
@@ -660,12 +722,60 @@ mod tests {
 }
 
 #[cfg(test)]
+mod bus_type_tests {
+    use super::{classify_linux_device_path, pci_address_from_device_path};
+    use nettool_domain::NicBusType;
+    use std::path::Path;
+
+    #[test]
+    fn classifies_pci_device_path_only_when_the_target_is_a_valid_bdf() {
+        let path = Path::new("/sys/devices/pci0000:00/0000:01:00.0");
+        assert_eq!(classify_linux_device_path(path), NicBusType::Pci);
+        assert_eq!(
+            pci_address_from_device_path(path, NicBusType::Pci),
+            Some("0000:01:00.0".to_owned())
+        );
+        assert_eq!(
+            classify_linux_device_path(Path::new("/sys/devices/pci0000:00/0000:01:00.00")),
+            NicBusType::Unknown
+        );
+        assert_eq!(
+            classify_linux_device_path(Path::new("/sys/devices/pci0000:00/01:00.0")),
+            NicBusType::Unknown
+        );
+        assert_eq!(
+            classify_linux_device_path(Path::new("/sys/devices/pci0000:00/0000:01:00.8")),
+            NicBusType::Unknown
+        );
+    }
+
+    #[test]
+    fn classifies_usb_device_path_without_inventing_a_pci_address() {
+        let path = Path::new("/sys/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.0");
+        assert_eq!(classify_linux_device_path(path), NicBusType::Usb);
+        assert_eq!(pci_address_from_device_path(path, NicBusType::Usb), None);
+    }
+
+    #[test]
+    fn leaves_virtual_and_unknown_device_paths_unclassified() {
+        assert_eq!(
+            classify_linux_device_path(Path::new("/sys/devices/virtual/net/usb1")),
+            NicBusType::Unknown
+        );
+        assert_eq!(
+            classify_linux_device_path(Path::new("/sys/class/net/eth0")),
+            NicBusType::Unknown
+        );
+    }
+}
+
+#[cfg(test)]
 mod preflight_tests {
     use super::{
         AfXdpPreflightRequest, DpdkPreflightRequest, PreflightSeverity, evaluate_af_xdp_preflight,
         evaluate_preflight,
     };
-    use nettool_domain::{NicProbe, Platform, ProbeReport};
+    use nettool_domain::{NicBusType, NicProbe, Platform, ProbeReport};
 
     fn report() -> ProbeReport {
         ProbeReport {
@@ -679,6 +789,7 @@ mod preflight_tests {
             nics: vec![NicProbe {
                 name: "dpdk0".to_owned(),
                 pci_address: Some("0000:01:00.0".to_owned()),
+                bus_type: NicBusType::Pci,
                 driver: Some("vfio-pci".to_owned()),
                 link_speed_mbps: Some(100_000),
                 rx_queues: Some(8),
