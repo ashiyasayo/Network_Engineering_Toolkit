@@ -135,12 +135,15 @@ impl NodeControlService {
             }
             envelope::ControlMessage::StartTest(start) => {
                 let session_id = parse_session_id(&start.session_id)?;
-                let state = self.coordinator.lock().await.start(
-                    session_id,
-                    &start.operation_id,
-                    start.start_at_unix_nanoseconds,
-                    now_unix_nanoseconds,
-                )?;
+                let state = with_coordinator(&self.coordinator, |coordinator| {
+                    coordinator.start(
+                        session_id,
+                        &start.operation_id,
+                        start.start_at_unix_nanoseconds,
+                        now_unix_nanoseconds,
+                    )
+                })
+                .await?;
                 Ok(envelope::ControlMessage::TestStatus(TestStatus {
                     session_id: session_id.to_vec(),
                     state: state_name(state).to_owned(),
@@ -148,11 +151,10 @@ impl NodeControlService {
             }
             envelope::ControlMessage::StopTest(stop) => {
                 let session_id = parse_session_id(&stop.session_id)?;
-                let state = self
-                    .coordinator
-                    .lock()
-                    .await
-                    .stop(session_id, &stop.operation_id)?;
+                let state = with_coordinator(&self.coordinator, |coordinator| {
+                    coordinator.stop(session_id, &stop.operation_id)
+                })
+                .await?;
                 Ok(envelope::ControlMessage::TestStatus(TestStatus {
                     session_id: session_id.to_vec(),
                     state: state_name(state).to_owned(),
@@ -160,11 +162,11 @@ impl NodeControlService {
             }
             envelope::ControlMessage::TestResultRequest(query) => {
                 let session_id = parse_session_id(&query.session_id)?;
-                self.coordinator
-                    .lock()
-                    .await
-                    .test_result(session_id)
-                    .map(envelope::ControlMessage::TestResult)
+                with_coordinator(&self.coordinator, |coordinator| {
+                    coordinator.test_result(session_id)
+                })
+                .await
+                .map(envelope::ControlMessage::TestResult)
             }
             envelope::ControlMessage::Ping(ping) => Ok(envelope::ControlMessage::Pong(
                 nettool_node_protocol::Pong { nonce: ping.nonce },
@@ -453,6 +455,17 @@ impl NodeControlService {
     }
 }
 
+async fn with_coordinator<T, F>(
+    coordinator: &Arc<Mutex<SessionCoordinator>>,
+    operation: F,
+) -> Result<T, NetToolError>
+where
+    F: FnOnce(&mut SessionCoordinator) -> Result<T, NetToolError>,
+{
+    let mut guard = coordinator.lock().await;
+    operation(&mut guard)
+}
+
 fn validate_envelope(request: &Envelope) -> Result<(), NetToolError> {
     if request.protocol_major != PROTOCOL_MAJOR || request.protocol_minor > PROTOCOL_MINOR {
         return Err(NetToolError::new(
@@ -536,13 +549,15 @@ fn invalid(message: &'static str) -> NetToolError {
 
 #[cfg(test)]
 mod tests {
-    use super::NodeControlService;
+    use super::{NodeControlService, with_coordinator};
     use crate::LocalNodeIdentity;
     use nettool_node_protocol::{
         CapabilityRequest, Envelope, HelloRequest, PROTOCOL_MAJOR, PROTOCOL_MINOR, PrepareTest,
         StartTest, envelope,
     };
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::Arc;
+    use tokio::sync::{Mutex, oneshot};
 
     fn service() -> NodeControlService {
         NodeControlService::new(
@@ -582,6 +597,30 @@ mod tests {
             response.message,
             Some(envelope::ControlMessage::HelloResponse(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn coordinator_lock_is_released_before_worker_await() {
+        let coordinator = Arc::new(Mutex::new(crate::SessionCoordinator::new()));
+        let (ready_sender, ready_receiver) = oneshot::channel();
+        let (continue_sender, continue_receiver) = oneshot::channel();
+        let worker_coordinator = Arc::clone(&coordinator);
+        let worker = tokio::spawn(async move {
+            let value = with_coordinator(&worker_coordinator, |_coordinator| Ok(42_u8))
+                .await
+                .expect("coordinator operation");
+            ready_sender.send(()).expect("ready receiver");
+            continue_receiver.await.expect("continue signal");
+            value
+        });
+
+        ready_receiver.await.expect("worker entered await");
+        let query = with_coordinator(&coordinator, |_coordinator| Ok(7_u8))
+            .await
+            .expect("query must not wait for worker");
+        assert_eq!(query, 7);
+        continue_sender.send(()).expect("worker receiver");
+        assert_eq!(worker.await.expect("worker task"), 42);
     }
 
     #[tokio::test]

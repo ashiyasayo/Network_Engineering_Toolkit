@@ -13,7 +13,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -35,6 +35,7 @@ struct ActionCall {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_logging();
     let address = std::env::var("NETTOOL_GUI_LISTEN")
         .unwrap_or_else(|_| DEFAULT_LISTEN_ADDRESS.to_owned())
         .parse::<SocketAddr>()?;
@@ -44,15 +45,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(address).await?;
     let _ = HEALTH_PATH
         .set(std::env::var("NETTOOL_GUI_HEALTH_PATH").unwrap_or_else(|_| "/health".to_owned()));
-    eprintln!("nettool-gui listening on http://{address}");
+    tracing::info!(operation = "gui.listen", peer = %address, "nettool-gui listening");
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
             if let Err(error) = serve_connection(stream).await {
-                eprintln!("GUI request failed: {error}");
+                tracing::error!(operation = "gui.request", error = %error, "GUI request failed");
             }
         });
     }
+}
+
+fn init_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 async fn serve_connection(
@@ -183,6 +193,8 @@ async fn execute_action(call: ActionCall) -> HttpResponse {
         );
     };
     let request_id = request_id();
+    let started = Instant::now();
+    tracing::info!(request_id = %request_id, action = %call.action, operation = "gui.action", "GUI action started");
     let envelope = AgentEnvelope {
         protocol_major: PROTOCOL_MAJOR,
         protocol_minor: PROTOCOL_MINOR,
@@ -206,7 +218,7 @@ async fn execute_action(call: ActionCall) -> HttpResponse {
             dry_run: false,
         })),
     };
-    match request(&default_socket_path(), &envelope).await {
+    let response = match request(&default_socket_path(), &envelope).await {
         Ok(response) if response.request_id == request_id => match response.payload {
             Some(agent_envelope::Payload::Response(response)) if response.success => {
                 let data =
@@ -233,7 +245,9 @@ async fn execute_action(call: ActionCall) -> HttpResponse {
             "503 Service Unavailable",
             json!({"success":false,"error":{"code":error.code.as_str(),"message":error.message,"retryable":error.retryable}}),
         ),
-    }
+    };
+    tracing::info!(request_id = %request_id, operation = "gui.action", elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "GUI action completed");
+    response
 }
 
 fn request_id() -> String {

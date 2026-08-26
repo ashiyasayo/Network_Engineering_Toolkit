@@ -878,6 +878,8 @@ mod linux {
     use super::{AfXdpConfig, AfXdpError, AfXdpSocket, UmemRegion, XdpMmapOffsets, XdpRingOffset};
     use std::ffi::CString;
     use std::os::raw::{c_char, c_int, c_long, c_uint, c_void};
+    use std::ptr::NonNull;
+    use std::time::Duration;
 
     const AF_XDP: c_int = 44;
     const SOCK_RAW: c_int = 3;

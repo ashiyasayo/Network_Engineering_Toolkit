@@ -534,7 +534,10 @@ mod tests {
                     self.driver = None;
                 }
             } else if path.ends_with("drivers_probe") {
-                let device = PathBuf::from("/sys/bus/pci/devices")
+                let device = path
+                    .parent()
+                    .ok_or_else(|| Error::from(ErrorKind::InvalidInput))?
+                    .join("devices")
                     .join(String::from_utf8_lossy(value).as_ref())
                     .join("driver_override");
                 self.driver = self
@@ -555,13 +558,22 @@ mod tests {
         std::env::temp_dir().join(format!("nettool-resource-test-{}-{id}", std::process::id()))
     }
 
+    fn sysfs_root() -> PathBuf {
+        let id = TEST_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "nettool-resource-sysfs-{}-{id}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn hugepage_prepare_and_release_restore_original_count() {
         let state = state_directory();
-        let path = PathBuf::from("/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages");
+        let sysfs = sysfs_root();
+        let path = sysfs.join("kernel/mm/hugepages/hugepages-2048kB/nr_hugepages");
         let mut kernel = FakeKernel::default();
         kernel.files.insert(path, b"8".to_vec());
-        let mut executor = LinuxResourceExecutor::new(kernel, "/sys", &state).expect("executor");
+        let mut executor = LinuxResourceExecutor::new(kernel, &sysfs, &state).expect("executor");
         let prepared = executor
             .prepare_hugepages("op-1", None, 16, 2048)
             .expect("prepare");
@@ -579,7 +591,8 @@ mod tests {
             driver: Some("ixgbe".into()),
             ..FakeKernel::default()
         };
-        let mut executor = LinuxResourceExecutor::new(kernel, "/sys", &state).expect("executor");
+        let sysfs = sysfs_root();
+        let mut executor = LinuxResourceExecutor::new(kernel, &sysfs, &state).expect("executor");
         let prepared = executor
             .prepare_dpdk("op-nic", "0000:01:00.0")
             .expect("prepare");

@@ -79,25 +79,31 @@ pub fn atomic_replace_file(_path: &std::path::Path, _bytes: &[u8]) -> Result<(),
 }
 
 /// 從 Windows Named Pipe handle 取得 client SID 與 process ID。
+///
+/// # Errors
+///
+/// handle 無效、無法取得 client process/token、token 資訊格式錯誤或 SID
+/// 無法轉為文字時回傳錯誤。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[cfg(windows)]
 pub fn named_pipe_peer_identity(
     handle: windows_sys::Win32::Foundation::HANDLE,
 ) -> Result<PeerIdentity, String> {
     use std::ptr::null_mut;
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
-    use windows_sys::Win32::Security::{
-        GetTokenInformation, OpenProcessToken, TOKEN_QUERY, TOKEN_USER, TokenUser,
-    };
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
     use windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
 
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
         return Err("named pipe handle is invalid".to_owned());
     }
     let mut process_id = 0_u32;
     // SAFETY: handle is owned by the Tokio NamedPipeServer for this call and output pointer is valid.
-    let process_ok = unsafe { GetNamedPipeClientProcessId(handle, &mut process_id) } != 0;
+    let process_ok = unsafe { GetNamedPipeClientProcessId(handle, &raw mut process_id) } != 0;
     if !process_ok || process_id == 0 {
         return Err("cannot identify named pipe client process".to_owned());
     }
@@ -108,7 +114,7 @@ pub fn named_pipe_peer_identity(
     }
     let mut token = null_mut();
     // SAFETY: process is a live handle; token output pointer is valid.
-    let token_ok = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } != 0;
+    let token_ok = unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) } != 0;
     if !token_ok {
         // SAFETY: process was returned by OpenProcess and is closed exactly once.
         unsafe { CloseHandle(process) };
@@ -116,7 +122,7 @@ pub fn named_pipe_peer_identity(
     }
     let mut required = 0_u32;
     // SAFETY: first call only queries required size; null buffer is documented for this use.
-    let _ = unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &mut required) };
+    let _ = unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &raw mut required) };
     if required == 0 {
         // SAFETY: handles are valid and closed exactly once.
         unsafe {
@@ -125,7 +131,12 @@ pub fn named_pipe_peer_identity(
         }
         return Err("cannot query named pipe client token size".to_owned());
     }
-    let mut buffer = vec![0_u8; usize::try_from(required).map_err(|_| "token size overflow")?];
+    let required_bytes = usize::try_from(required).map_err(|_| "token size overflow")?;
+    let word_count = required_bytes
+        .checked_add(std::mem::size_of::<usize>() - 1)
+        .ok_or("token size overflow")?
+        / std::mem::size_of::<usize>();
+    let mut buffer = vec![0_usize; word_count];
     // SAFETY: buffer is writable for the requested size and output pointer is valid.
     let info_ok = unsafe {
         GetTokenInformation(
@@ -133,7 +144,7 @@ pub fn named_pipe_peer_identity(
             TokenUser,
             buffer.as_mut_ptr().cast(),
             required,
-            &mut required,
+            &raw mut required,
         )
     } != 0;
     if !info_ok {
@@ -148,7 +159,7 @@ pub fn named_pipe_peer_identity(
     let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
     let mut sid_text = null_mut();
     // SAFETY: SID pointer is owned by the token buffer and output pointer is valid.
-    let sid_ok = unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid_text) } != 0;
+    let sid_ok = unsafe { ConvertSidToStringSidW(user.User.Sid, &raw mut sid_text) } != 0;
     // SAFETY: handles are valid and closed exactly once.
     unsafe {
         CloseHandle(token);
@@ -168,7 +179,7 @@ pub fn named_pipe_peer_identity(
     let principal = unsafe { std::slice::from_raw_parts(sid_text, length) };
     let principal = String::from_utf16(principal).map_err(|_| "client SID is not UTF-16")?;
     // SAFETY: ConvertSidToStringSidW allocates with LocalAlloc; LocalFree releases it.
-    unsafe { windows_sys::Win32::System::Memory::LocalFree(sid_text.cast()) };
+    unsafe { LocalFree(sid_text.cast()) };
     Ok(PeerIdentity {
         principal,
         process_id: Some(process_id),

@@ -449,6 +449,7 @@ fn sync_parent(path: &std::path::Path) -> Result<(), NetToolError> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn sync_parent(_path: &std::path::Path) -> Result<(), NetToolError> {
     Ok(())
 }

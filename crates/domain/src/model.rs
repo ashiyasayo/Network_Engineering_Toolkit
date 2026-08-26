@@ -4,6 +4,51 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::IpAddr;
 
+/// 已驗證為 JSON object 的 opaque domain payload。
+///
+/// Domain 不解讀 backend-specific keys，但不接受 scalar 或 array，避免未驗證的 JSON
+/// 形狀穿透到 capability、session 與 benchmark profile 邊界。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct ValidatedJson(Value);
+
+impl ValidatedJson {
+    /// 從 JSON value 建立已驗證 payload。
+    ///
+    /// # Errors
+    ///
+    /// value 不是 JSON object 時回傳錯誤。
+    pub fn try_from_value(value: Value) -> Result<Self, &'static str> {
+        if value.is_object() {
+            Ok(Self(value))
+        } else {
+            Err("validated JSON payload must be an object")
+        }
+    }
+
+    /// 取得唯讀 JSON view；呼叫端不會取得可繞過驗證的 mutable value。
+    #[must_use]
+    pub fn as_value(&self) -> &Value {
+        &self.0
+    }
+
+    /// 取出已驗證的 JSON value。
+    #[must_use]
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ValidatedJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::try_from_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
 macro_rules! string_id {
     ($name:ident, $documentation:literal) => {
         #[doc = $documentation]
@@ -259,7 +304,7 @@ pub struct Capability {
     /// Capability 自身版本。
     pub version: u32,
     /// 附加限制，例如 backend 或最大 stream 數。
-    pub parameters: Value,
+    pub parameters: ValidatedJson,
 }
 
 /// 已發現或已配對的遠端 Node。
@@ -377,7 +422,7 @@ pub struct SpeedSession {
     /// Stream 數。
     pub streams: u16,
     /// 測試完成後的 structured result。
-    pub result: Option<Value>,
+    pub result: Option<ValidatedJson>,
 }
 
 /// Packet capture mode；預設必須為 `Off`。
@@ -455,7 +500,7 @@ pub struct BenchmarkProfile {
     /// Measurement 秒數。
     pub measurement_seconds: u64,
     /// Backend-specific parameters。
-    pub parameters: Value,
+    pub parameters: ValidatedJson,
 }
 
 /// 認證結果綁定的硬體與軟體環境。
@@ -515,12 +560,20 @@ pub struct AuditRecord {
 
 #[cfg(test)]
 mod tests {
-    use super::SafetyPolicy;
+    use super::{SafetyPolicy, ValidatedJson};
+    use serde_json::json;
 
     #[test]
     fn safe_apply_is_enabled_by_default() {
         let policy = SafetyPolicy::default();
         assert!(policy.safe_apply);
         assert!(policy.confirm_timeout_seconds > 0);
+    }
+
+    #[test]
+    fn validated_json_rejects_non_object_payloads() {
+        assert!(ValidatedJson::try_from_value(json!({"backend":"socket"})).is_ok());
+        assert!(ValidatedJson::try_from_value(json!(null)).is_err());
+        assert!(serde_json::from_value::<ValidatedJson>(json!(["not-an-object"])).is_err());
     }
 }

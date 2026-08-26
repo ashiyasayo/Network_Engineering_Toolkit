@@ -5,6 +5,18 @@
 
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 #![cfg_attr(windows, allow(unsafe_code))]
+// RIO 的 Windows ABI 使用固定寬度欄位與 raw pointer；這些轉換集中在
+// experimental adapter 邊界，不能以一般 Rust 資料結構的 lint 規則判斷。
+#![cfg_attr(
+    windows,
+    allow(
+        clippy::borrow_as_ptr,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::elidable_lifetime_names,
+        clippy::ref_as_ptr
+    )
+)]
 
 use std::collections::VecDeque;
 

@@ -2,10 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-use nettool_benchmark::{
-    BenchmarkEnvironmentSnapshot, CertificationEvidence, CertificationPolicy, SupportLevel,
-    evaluate_certification,
-};
 use nettool_error::{ErrorCode, NetToolError};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -86,7 +82,37 @@ pub struct TrustedNodeConnection<'a> {
     pub identity_change_confirmed: bool,
 }
 
-/// 原子保存 benchmark/certification 所需的資料。
+/// 原子保存已由 application layer 評估完成的 benchmark/certification 資料。
+///
+/// Storage 不重新執行 certification gates；呼叫端必須先產生 environment hash、result 與
+/// `certification_state`，並對完整 artifact 計算 checksum。Storage 只驗證 checksum 與
+/// SQLite invariants。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BenchmarkCertificationState {
+    /// Benchmark 無法執行。
+    Unsupported,
+    /// Benchmark 可執行但尚未完成一般驗證。
+    Functional,
+    /// Benchmark 已完成一般驗證。
+    Validated,
+    /// Benchmark 已通過 100GbE certification。
+    Certified100G,
+}
+
+impl BenchmarkCertificationState {
+    /// 回傳資料庫使用的穩定字串。
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::Functional => "functional",
+            Self::Validated => "validated",
+            Self::Certified100G => "100g_certified",
+        }
+    }
+}
+
+/// Persistence boundary for an application-evaluated benchmark artifact.
 pub struct BenchmarkPersistenceRequest<'a> {
     /// Hardware profile registry ID。
     pub hardware_profile_id: &'a str,
@@ -98,12 +124,16 @@ pub struct BenchmarkPersistenceRequest<'a> {
     pub software_build: &'a str,
     /// 完整 benchmark configuration。
     pub configuration: &'a Value,
-    /// Environment snapshot。
-    pub environment: &'a BenchmarkEnvironmentSnapshot,
-    /// 原始 gate evidence。
-    pub evidence: &'a CertificationEvidence,
-    /// POC policy；沒有時絕不建立 certification row。
-    pub policy: Option<CertificationPolicy>,
+    /// 已序列化的 environment snapshot。
+    pub environment: &'a Value,
+    /// Application layer 根據 environment snapshot 計算的 platform combination SHA-256。
+    pub hardware_profile_hash: &'a str,
+    /// Application layer 已驗證的 benchmark/certification result。
+    pub result: &'a Value,
+    /// application evaluator 產生的支援等級。
+    pub certification_state: BenchmarkCertificationState,
+    /// application layer 對 benchmark artifact 計算的 SHA-256 checksum。
+    pub checksum: &'a str,
     /// UTC timestamp，由 Agent clock authority 提供。
     pub created_at: &'a str,
 }
@@ -1034,10 +1064,7 @@ impl Storage {
         Ok(())
     }
 
-    /// 重新評估並以單一 transaction 保存 environment、result 與可選 certification。
-    ///
-    /// Caller 不能直接提交 `Certified100G` 字串；只有 evaluator 在完整 policy/evidence
-    /// 下回傳 Certified 才會建立 `hardware_certification` row。
+    /// 以單一 transaction 保存 application layer 已評估的 environment、result 與可選 certification。
     ///
     /// # Errors
     ///
@@ -1047,21 +1074,28 @@ impl Storage {
         request: &BenchmarkPersistenceRequest<'_>,
     ) -> Result<PersistedBenchmark, NetToolError> {
         validate_benchmark_request(request)?;
-        let hardware_profile_hash = request.environment.certification_key()?;
-        let outcome =
-            evaluate_certification(request.environment, request.evidence, request.policy)?;
+        let hardware_profile_hash = request.hardware_profile_hash.to_owned();
         let environment_json = serde_json::to_string(request.environment).map_err(json_error)?;
         let configuration_json =
             serde_json::to_string(request.configuration).map_err(json_error)?;
-        let result_json = serde_json::to_string(&outcome).map_err(json_error)?;
-        let certification_state = support_state(outcome.support_level).to_owned();
-        let checksum = benchmark_checksum(
-            request,
+        let result_json = serde_json::to_string(request.result).map_err(json_error)?;
+        let expected_checksum = calculate_benchmark_checksum(
+            request.benchmark_result_id,
+            request.software_build,
             &hardware_profile_hash,
-            &configuration_json,
-            &result_json,
-        );
-        let certified = outcome.support_level == Some(SupportLevel::Certified100G);
+            request.configuration,
+            request.result,
+        )?;
+        if request.checksum != expected_checksum {
+            return Err(NetToolError::new(
+                ErrorCode::InvalidArgument,
+                "benchmark checksum does not match the supplied artifact",
+                false,
+            ));
+        }
+        let checksum = request.checksum.to_owned();
+        let certification_state = request.certification_state.as_str().to_owned();
+        let certified = request.certification_state == BenchmarkCertificationState::Certified100G;
         let transaction = self.connection.transaction().map_err(database_error)?;
         transaction
             .execute(
@@ -1194,31 +1228,72 @@ fn validate_benchmark_request(
             false,
         ));
     }
+    if request.hardware_profile_hash.len() != 64
+        || !request
+            .hardware_profile_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(NetToolError::new(
+            ErrorCode::InvalidArgument,
+            "hardware profile hash must be a 64-character hexadecimal SHA-256",
+            false,
+        ));
+    }
+    if request.checksum.len() != 64
+        || !request
+            .checksum
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(NetToolError::new(
+            ErrorCode::InvalidArgument,
+            "benchmark checksum must be a 64-character hexadecimal SHA-256",
+            false,
+        ));
+    }
+    if !request.environment.is_object() || !request.result.is_object() {
+        return Err(NetToolError::new(
+            ErrorCode::InvalidArgument,
+            "benchmark environment and result must be JSON objects",
+            false,
+        ));
+    }
+    if request.certification_state == BenchmarkCertificationState::Certified100G
+        && request.certification_id.is_none()
+    {
+        return Err(NetToolError::new(
+            ErrorCode::InvalidArgument,
+            "certified benchmark requires a certification ID",
+            false,
+        ));
+    }
     Ok(())
 }
 
-fn support_state(level: Option<SupportLevel>) -> &'static str {
-    match level {
-        None => "unsupported",
-        Some(SupportLevel::Functional) => "functional",
-        Some(SupportLevel::Validated) => "validated",
-        Some(SupportLevel::Certified100G) => "100g_certified",
-    }
-}
-
-fn benchmark_checksum(
-    request: &BenchmarkPersistenceRequest<'_>,
+/// 由 application layer 產生與 Storage 驗證的 benchmark artifact checksum。
+///
+/// 這個函式只負責 canonical serialization 與雜湊，不執行任何 certification gate。
+///
+/// # Errors
+///
+/// configuration 或 result 無法序列化時回傳錯誤。
+pub fn calculate_benchmark_checksum(
+    benchmark_result_id: &str,
+    software_build: &str,
     hardware_profile_hash: &str,
-    configuration_json: &str,
-    result_json: &str,
-) -> String {
+    configuration: &Value,
+    result: &Value,
+) -> Result<String, NetToolError> {
+    let configuration_json = serde_json::to_string(configuration).map_err(json_error)?;
+    let result_json = serde_json::to_string(result).map_err(json_error)?;
     let mut digest = Sha256::new();
     for value in [
-        request.benchmark_result_id,
-        request.software_build,
+        benchmark_result_id,
+        software_build,
         hardware_profile_hash,
-        configuration_json,
-        result_json,
+        &configuration_json,
+        &result_json,
     ] {
         digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
         digest.update(value.as_bytes());
@@ -1227,7 +1302,7 @@ fn benchmark_checksum(
     for byte in digest.finalize() {
         let _ = write!(checksum, "{byte:02x}");
     }
-    checksum
+    Ok(checksum)
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1436,11 +1511,14 @@ fn hex_digest(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{BenchmarkPersistenceRequest, PacketSessionPersistenceRequest, Storage};
+    use super::{
+        BenchmarkCertificationState, BenchmarkPersistenceRequest, PacketSessionPersistenceRequest,
+        Storage, calculate_benchmark_checksum,
+    };
     use nettool_benchmark::{
         AnalyzerLoadEvidence, BenchmarkDrops, BenchmarkEnvironmentSnapshot, CertificationEvidence,
-        CertificationPolicy, CpuEvidence, RxBaselineEvidence, StabilityEvidence, ThermalEvidence,
-        TxBaselineEvidence,
+        CertificationPolicy, CpuEvidence, RxBaselineEvidence, StabilityEvidence, SupportLevel,
+        ThermalEvidence, TxBaselineEvidence, evaluate_certification,
     };
     use serde_json::json;
 
@@ -1855,9 +1933,17 @@ mod tests {
     #[test]
     fn benchmark_without_policy_is_persisted_but_never_certified() {
         let mut storage = Storage::in_memory().expect("store");
-        let environment = environment();
-        let evidence = evidence();
+        let (environment, hardware_profile_hash, result, certification_state) =
+            evaluated_benchmark(None);
         let configuration = json!({"profile":"100g-cert"});
+        let checksum = calculate_benchmark_checksum(
+            "benchmark-1",
+            "build-1",
+            &hardware_profile_hash,
+            &configuration,
+            &result,
+        )
+        .expect("checksum");
         let persisted = storage
             .persist_benchmark(&BenchmarkPersistenceRequest {
                 hardware_profile_id: "hardware-1",
@@ -1866,8 +1952,10 @@ mod tests {
                 software_build: "build-1",
                 configuration: &configuration,
                 environment: &environment,
-                evidence: &evidence,
-                policy: None,
+                hardware_profile_hash: &hardware_profile_hash,
+                result: &result,
+                certification_state,
+                checksum: &checksum,
                 created_at: "2026-08-15T00:00:00Z",
             })
             .expect("persist");
@@ -1878,11 +1966,46 @@ mod tests {
     }
 
     #[test]
+    fn benchmark_artifact_checksum_is_verified_before_persistence() {
+        let mut storage = Storage::in_memory().expect("store");
+        let (environment, hardware_profile_hash, result, certification_state) =
+            evaluated_benchmark(None);
+        let configuration = json!({"profile":"100g-cert"});
+        let checksum = "0".repeat(64);
+        let request = BenchmarkPersistenceRequest {
+            hardware_profile_id: "hardware-1",
+            benchmark_result_id: "benchmark-1",
+            certification_id: None,
+            software_build: "build-1",
+            configuration: &configuration,
+            environment: &environment,
+            hardware_profile_hash: &hardware_profile_hash,
+            result: &result,
+            certification_state,
+            checksum: &checksum,
+            created_at: "2026-08-15T00:00:00Z",
+        };
+        let error = storage
+            .persist_benchmark(&request)
+            .expect_err("tampered checksum");
+        assert_eq!(error.code.as_str(), "CLI.INVALID_ARGUMENT");
+        assert_eq!(storage.hardware_certification_count().expect("count"), 0);
+    }
+
+    #[test]
     fn certified_insert_is_atomic_and_requires_certification_id() {
         let mut storage = Storage::in_memory().expect("store");
-        let environment = environment();
-        let evidence = evidence();
+        let (environment, hardware_profile_hash, result, certification_state) =
+            evaluated_benchmark(Some(policy()));
         let configuration = json!({"profile":"100g-cert"});
+        let checksum = calculate_benchmark_checksum(
+            "benchmark-1",
+            "build-1",
+            &hardware_profile_hash,
+            &configuration,
+            &result,
+        )
+        .expect("checksum");
         let mut request = BenchmarkPersistenceRequest {
             hardware_profile_id: "hardware-1",
             benchmark_result_id: "benchmark-1",
@@ -1890,8 +2013,10 @@ mod tests {
             software_build: "build-1",
             configuration: &configuration,
             environment: &environment,
-            evidence: &evidence,
-            policy: Some(policy()),
+            hardware_profile_hash: &hardware_profile_hash,
+            result: &result,
+            certification_state,
+            checksum: &checksum,
             created_at: "2026-08-15T00:00:00Z",
         };
         assert!(storage.persist_benchmark(&request).is_err());
@@ -2013,5 +2138,29 @@ mod tests {
             maximum_analyzer_drops: 0,
             allow_thermal_throttling_condition: false,
         }
+    }
+
+    fn evaluated_benchmark(
+        policy: Option<CertificationPolicy>,
+    ) -> (
+        serde_json::Value,
+        String,
+        serde_json::Value,
+        BenchmarkCertificationState,
+    ) {
+        let environment = environment();
+        let outcome = evaluate_certification(&environment, &evidence(), policy).expect("evaluate");
+        let state = match outcome.support_level {
+            None => BenchmarkCertificationState::Unsupported,
+            Some(SupportLevel::Functional) => BenchmarkCertificationState::Functional,
+            Some(SupportLevel::Validated) => BenchmarkCertificationState::Validated,
+            Some(SupportLevel::Certified100G) => BenchmarkCertificationState::Certified100G,
+        };
+        (
+            serde_json::to_value(&environment).expect("environment JSON"),
+            outcome.certification_key.clone().expect("environment hash"),
+            serde_json::to_value(outcome).expect("result JSON"),
+            state,
+        )
     }
 }

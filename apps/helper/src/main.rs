@@ -2,6 +2,15 @@
 
 #![forbid(unsafe_code)]
 
+fn init_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 #[cfg(unix)]
 mod linux {
     use nettool_error::{ErrorCode, NetToolError};
@@ -223,13 +232,23 @@ mod linux {
         for HelperService<E, K>
     {
         fn handle(&mut self, request: PrivilegedRequest) -> PrivilegedResponse {
+            let started = std::time::Instant::now();
+            let request_id = request.request_id.clone();
+            let operation = request.operation.name();
+            tracing::info!(request_id = %request_id, operation = %operation, "helper request started");
             match self.execute(&request) {
-                Ok(result) => PrivilegedResponse {
-                    request_id: request.request_id,
-                    result: Some(result),
-                    error: None,
-                },
-                Err(error) => error_response(request.request_id, &error),
+                Ok(result) => {
+                    tracing::info!(request_id = %request_id, operation = %operation, success = true, elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "helper request completed");
+                    PrivilegedResponse {
+                        request_id: request.request_id,
+                        result: Some(result),
+                        error: None,
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(request_id = %request_id, operation = %operation, success = false, error_code = %error.code.as_str(), elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "helper request failed");
+                    error_response(request.request_id, &error)
+                }
             }
         }
     }
@@ -474,6 +493,7 @@ mod linux {
 #[cfg(unix)]
 #[tokio::main]
 async fn main() {
+    init_logging();
     if let Err(error) = linux::run().await {
         eprintln!("{}: {}", error.code.as_str(), error.message);
         std::process::exit(1);
@@ -495,7 +515,7 @@ mod windows {
     use serde_json::{Value, json};
     use std::env;
     use std::fs::{self, OpenOptions};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tokio::net::windows::named_pipe::ServerOptions;
     use tokio::time::{Duration, interval, timeout};
 
@@ -601,13 +621,23 @@ mod windows {
 
     impl PrivilegedRequestHandler for Service {
         fn handle(&mut self, request: PrivilegedRequest) -> PrivilegedResponse {
+            let started = std::time::Instant::now();
+            let request_id = request.request_id.clone();
+            let operation = request.operation.name();
+            tracing::info!(request_id = %request_id, operation = %operation, "helper request started");
             match self.execute(&request) {
-                Ok(result) => PrivilegedResponse {
-                    request_id: request.request_id,
-                    result: Some(result),
-                    error: None,
-                },
-                Err(error) => error_response(request.request_id, &error),
+                Ok(result) => {
+                    tracing::info!(request_id = %request_id, operation = %operation, success = true, elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "helper request completed");
+                    PrivilegedResponse {
+                        request_id: request.request_id,
+                        result: Some(result),
+                        error: None,
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(request_id = %request_id, operation = %operation, success = false, error_code = %error.code.as_str(), elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "helper request failed");
+                    error_response(request.request_id, &error)
+                }
             }
         }
     }
@@ -714,7 +744,7 @@ mod windows {
         })
     }
 
-    fn atomic_replace(path: &PathBuf, bytes: &[u8]) -> Result<(), NetToolError> {
+    fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), NetToolError> {
         nettool_platform_auth::atomic_replace_file(path, bytes)
             .map_err(|message| NetToolError::new(ErrorCode::PersistenceFailed, message, true))
     }
@@ -728,12 +758,15 @@ mod windows {
     fn invalid(message: &str) -> NetToolError {
         NetToolError::new(ErrorCode::InvalidArgument, message, false)
     }
+    #[allow(clippy::needless_pass_by_value)]
     fn io_error(error: std::io::Error) -> NetToolError {
         NetToolError::new(ErrorCode::PersistenceFailed, error.to_string(), true)
     }
+    #[allow(clippy::needless_pass_by_value)]
     fn pipe_error(error: std::io::Error) -> NetToolError {
         NetToolError::new(ErrorCode::HelperTransportFailed, error.to_string(), true)
     }
+    #[allow(clippy::needless_pass_by_value)]
     fn protocol_error(error: serde_json::Error) -> NetToolError {
         NetToolError::new(ErrorCode::ProtocolInvalid, error.to_string(), false)
     }
@@ -742,6 +775,7 @@ mod windows {
 #[cfg(windows)]
 #[tokio::main]
 async fn main() {
+    init_logging();
     if let Err(error) = windows::run().await {
         eprintln!("{}: {}", error.code.as_str(), error.message);
         std::process::exit(1);
@@ -750,6 +784,7 @@ async fn main() {
 
 #[cfg(all(not(unix), not(windows)))]
 fn main() {
+    init_logging();
     eprintln!("PLATFORM.UNSUPPORTED: nettool-helper has no supported transport on this platform");
     std::process::exit(1);
 }

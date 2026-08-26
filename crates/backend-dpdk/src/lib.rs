@@ -563,11 +563,12 @@ fn probe_linux(warnings: &mut Vec<String>) -> Result<LinuxProbe, NetToolError> {
     });
     let nodes = fs::read_dir("/sys/devices/system/node")
         .ok()
-        .map(|entries| {
-            entries
+        .and_then(|entries| {
+            let count = entries
                 .filter_map(Result::ok)
                 .filter(|entry| is_numbered_name(&entry.file_name().to_string_lossy(), "node"))
-                .count() as u32
+                .count();
+            u32::try_from(count).ok()
         });
     Ok((
         nics,
@@ -614,11 +615,12 @@ fn read_number(path: PathBuf) -> Option<u64> {
 
 #[cfg(target_os = "linux")]
 fn count_queues(path: PathBuf, prefix: &str) -> Option<u32> {
-    fs::read_dir(path).ok().map(|entries| {
-        entries
+    fs::read_dir(path).ok().and_then(|entries| {
+        let count = entries
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
-            .count() as u32
+            .count();
+        u32::try_from(count).ok()
     })
 }
 
