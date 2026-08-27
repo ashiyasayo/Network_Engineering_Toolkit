@@ -157,7 +157,7 @@ pub struct XdpRedirectLink {
     link_fd: i32,
 }
 
-/// 一個 kernel AF_XDP ring 的 mapped region。
+/// 一個 kernel `AF_XDP` ring 的 mapped region。
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct XdpRingMapping {
@@ -167,7 +167,7 @@ pub struct XdpRingMapping {
     entries: u32,
 }
 
-/// 四個 AF_XDP ring 的 RAII mapping；mapping 不會跨執行緒共享 owner。
+/// 四個 `AF_XDP` ring 的 RAII mapping；mapping 不會跨執行緒共享 owner。
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct XdpRingMappings {
@@ -224,15 +224,20 @@ impl<'a> AfXdpWorker<'a> {
     }
 
     /// 從 RX ring 取出最多 `output.len()` 個 descriptor，並發布 consumer index。
+    ///
+    /// # Errors
+    ///
+    /// ring metadata 讀取失敗、descriptor 超出 UMEM 邊界或發布 consumer index
+    /// 失敗時回傳錯誤。
     pub fn receive_into(&self, output: &mut [XdpDescriptor]) -> Result<usize, AfXdpError> {
         let consumer = self.rx.consumer_index()?;
         let producer = self.rx.producer_index()?;
         let available = producer.wrapping_sub(consumer).min(self.rx.entries);
         let count = available.min(u32::try_from(output.len()).unwrap_or(u32::MAX));
         for (offset, item) in output.iter_mut().take(count as usize).enumerate() {
-            let descriptor = self
-                .rx
-                .read_descriptor(consumer.wrapping_add(offset as u32) & (self.rx.entries - 1))?;
+            let descriptor = self.rx.read_descriptor(
+                consumer.wrapping_add(ring_index(offset)?) & (self.rx.entries - 1),
+            )?;
             validate_umem_descriptor(self.umem, descriptor)?;
             *item = descriptor;
         }
@@ -243,6 +248,10 @@ impl<'a> AfXdpWorker<'a> {
     }
 
     /// 等待 RX readiness 後 drain 一批 descriptors；timeout 時回傳 `0`。
+    ///
+    /// # Errors
+    ///
+    /// 等待 kernel I/O 或讀取 RX ring metadata 失敗時回傳錯誤。
     pub fn receive_once(
         &self,
         socket: &AfXdpSocket,
@@ -259,6 +268,11 @@ impl<'a> AfXdpWorker<'a> {
     ///
     /// `output` 必須足以容納整個 packet 的 descriptors；方法不會只消費半個 jumbo
     /// packet，避免 caller 將不完整資料交給 parser。
+    ///
+    /// # Errors
+    ///
+    /// ring metadata 讀取失敗、descriptor 超出 UMEM 邊界、輸出緩衝區不足或發布
+    /// consumer index 失敗時回傳錯誤。
     pub fn receive_packet_into(&self, output: &mut [XdpDescriptor]) -> Result<usize, AfXdpError> {
         let consumer = self.rx.consumer_index()?;
         let producer = self.rx.producer_index()?;
@@ -286,15 +300,20 @@ impl<'a> AfXdpWorker<'a> {
             ));
         }
         for (index, item) in output.iter_mut().take(needed_usize).enumerate() {
-            *item = self
-                .rx
-                .read_descriptor(consumer.wrapping_add(index as u32) & (self.rx.entries - 1))?;
+            *item = self.rx.read_descriptor(
+                consumer.wrapping_add(ring_index(index)?) & (self.rx.entries - 1),
+            )?;
         }
         self.rx.publish_consumer(consumer.wrapping_add(needed))?;
         Ok(needed_usize)
     }
 
     /// 將 TX descriptors 寫入 ring；容量不足時只提交可容納的前綴。
+    ///
+    /// # Errors
+    ///
+    /// ring metadata 讀取失敗、descriptor 超出 UMEM 邊界或發布 producer index
+    /// 失敗時回傳錯誤。
     pub fn submit_tx(&self, descriptors: &[XdpDescriptor]) -> Result<usize, AfXdpError> {
         let producer = self.tx.producer_index()?;
         let consumer = self.tx.consumer_index()?;
@@ -306,7 +325,7 @@ impl<'a> AfXdpWorker<'a> {
         for (offset, descriptor) in descriptors.iter().take(count as usize).enumerate() {
             validate_umem_descriptor(self.umem, *descriptor)?;
             self.tx.write_descriptor(
-                producer.wrapping_add(offset as u32) & (self.tx.entries - 1),
+                producer.wrapping_add(ring_index(offset)?) & (self.tx.entries - 1),
                 *descriptor,
             )?;
         }
@@ -317,6 +336,10 @@ impl<'a> AfXdpWorker<'a> {
     }
 
     /// 提交 TX descriptors 並立即通知 kernel；未提交 descriptor 時不發送 kick。
+    ///
+    /// # Errors
+    ///
+    /// ring 操作或 kernel TX kick 失敗時回傳錯誤。
     #[cfg(target_os = "linux")]
     pub fn submit_tx_and_kick(
         &self,
@@ -331,6 +354,10 @@ impl<'a> AfXdpWorker<'a> {
     }
 
     /// 從 COMPLETION ring 回收最多 `output.len()` 個 descriptor。
+    ///
+    /// # Errors
+    ///
+    /// ring metadata 讀取失敗或發布 consumer index 失敗時回傳錯誤。
     pub fn recycle_completions(&self, output: &mut [XdpDescriptor]) -> Result<usize, AfXdpError> {
         let consumer = self.completion.consumer_index()?;
         let producer = self.completion.producer_index()?;
@@ -338,7 +365,7 @@ impl<'a> AfXdpWorker<'a> {
         let count = available.min(u32::try_from(output.len()).unwrap_or(u32::MAX));
         for (offset, item) in output.iter_mut().take(count as usize).enumerate() {
             *item = self.completion.read_descriptor(
-                consumer.wrapping_add(offset as u32) & (self.completion.entries - 1),
+                consumer.wrapping_add(ring_index(offset)?) & (self.completion.entries - 1),
             )?;
         }
         if count != 0 {
@@ -349,6 +376,11 @@ impl<'a> AfXdpWorker<'a> {
     }
 
     /// 將 UMEM frame base address 補回 FILL ring；容量不足時只提交可容納的前綴。
+    ///
+    /// # Errors
+    ///
+    /// ring metadata 讀取失敗、frame index 超出 UMEM 邊界或發布 producer index
+    /// 失敗時回傳錯誤。
     pub fn refill_fill(&self, frame_indices: &[u64]) -> Result<usize, AfXdpError> {
         let producer = self.fill.producer_index()?;
         let consumer = self.fill.consumer_index()?;
@@ -359,7 +391,7 @@ impl<'a> AfXdpWorker<'a> {
         let count = free.min(u32::try_from(frame_indices.len()).unwrap_or(u32::MAX));
         for (offset, frame_index) in frame_indices.iter().take(count as usize).enumerate() {
             self.fill.write_descriptor(
-                producer.wrapping_add(offset as u32) & (self.fill.entries - 1),
+                producer.wrapping_add(ring_index(offset)?) & (self.fill.entries - 1),
                 XdpDescriptor {
                     address: self.umem.frame_offset(*frame_index)?,
                     length: 0,
@@ -392,33 +424,57 @@ fn validate_umem_descriptor(
 }
 
 #[cfg(target_os = "linux")]
+fn ring_index(value: usize) -> Result<u32, AfXdpError> {
+    u32::try_from(value).map_err(|_| AfXdpError::InvalidConfig("ring index exceeds u32".to_owned()))
+}
+
+#[cfg(target_os = "linux")]
 const XDP_PKT_CONTD: u32 = 1 << 1;
 
 #[cfg(target_os = "linux")]
 impl XdpRingMapping {
     /// 讀取 kernel producer index；只有 producer owner 可呼叫對應的寫入方法。
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// index offset 超出 mapping 邊界時回傳錯誤。
     pub fn producer_index(&self) -> Result<u32, AfXdpError> {
         self.read_index(self.offsets.producer)
     }
 
     /// 讀取 kernel consumer index。
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// index offset 超出 mapping 邊界時回傳錯誤。
     pub fn consumer_index(&self) -> Result<u32, AfXdpError> {
         self.read_index(self.offsets.consumer)
     }
 
     /// 由 producer owner 發布新 index。
+    ///
+    /// # Errors
+    ///
+    /// index offset 超出 mapping 邊界時回傳錯誤。
     pub fn publish_producer(&self, index: u32) -> Result<(), AfXdpError> {
         self.write_index(self.offsets.producer, index)
     }
 
     /// 由 consumer owner 發布新 index。
+    ///
+    /// # Errors
+    ///
+    /// index offset 超出 mapping 邊界時回傳錯誤。
     pub fn publish_consumer(&self, index: u32) -> Result<(), AfXdpError> {
         self.write_index(self.offsets.consumer, index)
     }
 
     /// 讀取 bounded descriptor slot。
+    ///
+    /// # Errors
+    ///
+    /// descriptor slot 或 mapping 邊界不合法時回傳錯誤。
+    #[allow(clippy::cast_ptr_alignment)]
     pub fn read_descriptor(&self, slot: u32) -> Result<XdpDescriptor, AfXdpError> {
         let pointer = self.descriptor_pointer(slot)?;
         // SAFETY: descriptor_pointer validates mapping bounds and alignment.
@@ -432,6 +488,11 @@ impl XdpRingMapping {
     }
 
     /// 寫入 bounded descriptor slot；呼叫者必須是該 ring 的 producer owner。
+    ///
+    /// # Errors
+    ///
+    /// descriptor slot 或 mapping 邊界不合法時回傳錯誤。
+    #[allow(clippy::cast_ptr_alignment)]
     pub fn write_descriptor(&self, slot: u32, descriptor: XdpDescriptor) -> Result<(), AfXdpError> {
         let pointer = self.descriptor_pointer(slot)?;
         // SAFETY: descriptor_pointer validates mapping bounds and alignment.
@@ -784,6 +845,10 @@ impl AfXdpSocket {
     }
 
     /// 依 kernel offsets 建立四個 ring mapping。
+    ///
+    /// # Errors
+    ///
+    /// ring mapping 大小溢位、kernel mmap 失敗或設定不合法時回傳錯誤。
     #[cfg(target_os = "linux")]
     pub fn map_rings(
         &self,
@@ -794,6 +859,10 @@ impl AfXdpSocket {
     }
 
     /// 將 UMEM frame base address 一次填入 FILL ring，供 kernel 接收封包。
+    ///
+    /// # Errors
+    ///
+    /// FILL ring 非空、容量不足、frame index 計算溢位或 ring 操作失敗時回傳錯誤。
     #[cfg(target_os = "linux")]
     pub fn initialize_fill_ring(
         &self,
@@ -804,6 +873,10 @@ impl AfXdpSocket {
     }
 
     /// 等待 RX/TX ring 有事件；timeout 到期回傳 `false`，不 busy-loop。
+    ///
+    /// # Errors
+    ///
+    /// kernel poll 回傳錯誤或 ring socket 發生錯誤事件時回傳錯誤。
     #[cfg(target_os = "linux")]
     pub fn wait_for_io(&self, timeout: Duration) -> Result<bool, AfXdpError> {
         linux::wait_for_io(self.fd, timeout)
@@ -811,14 +884,22 @@ impl AfXdpSocket {
 
     /// 通知 kernel 消費已提交的 TX descriptors。
     ///
-    /// AF_XDP 在 TX ring 發布 producer index 後，若 socket flag 要求 wakeup，仍須以
+    /// `AF_XDP` 在 TX ring 發布 producer index 後，若 socket flag 要求 wakeup，仍須以
     /// zero-length `sendto` kick kernel；只更新 shared ring 不保證封包離開 NIC。
+    ///
+    /// # Errors
+    ///
+    /// kernel `sendto` kick 失敗時回傳錯誤。
     #[cfg(target_os = "linux")]
     pub fn kick_tx(&self) -> Result<(), AfXdpError> {
         linux::kick_tx(self.fd)
     }
 
     /// 建立可供 XDP redirect 使用的 XSKMAP。
+    ///
+    /// # Errors
+    ///
+    /// kernel 建立 XSKMAP 失敗或容量不符合 bounded power-of-two 限制時回傳錯誤。
     #[cfg(target_os = "linux")]
     pub fn create_xsk_map(max_entries: u32) -> Result<XskMap, AfXdpError> {
         linux::create_xsk_map(max_entries)
@@ -837,7 +918,11 @@ impl AfXdpSocket {
 
 #[cfg(target_os = "linux")]
 impl XskMap {
-    /// 更新 queue→AF_XDP socket mapping；同一 queue 只允許一個 socket owner。
+    /// 更新 queue 到 `AF_XDP` socket 的 mapping；同一 queue 只允許一個 socket owner。
+    ///
+    /// # Errors
+    ///
+    /// queue 超出 map 容量或 kernel 更新 XSKMAP 失敗時回傳錯誤。
     pub fn insert(&self, queue_id: u32, socket: &AfXdpSocket) -> Result<(), AfXdpError> {
         if queue_id >= self.max_entries {
             return Err(AfXdpError::InvalidConfig(
@@ -854,6 +939,10 @@ impl XskMap {
     }
 
     /// 載入固定 XDP redirect program，將封包依 RX queue 導向此 XSKMAP。
+    ///
+    /// # Errors
+    ///
+    /// interface 不存在、kernel 載入 BPF program 或建立 link 失敗時回傳錯誤。
     pub fn attach_redirect(&self, interface_name: &str) -> Result<XdpRedirectLink, AfXdpError> {
         linux::attach_redirect(self.fd, interface_name)
     }
@@ -951,11 +1040,11 @@ mod linux {
 
     #[repr(C)]
     #[derive(Clone, Copy)]
-    struct BpfInsn {
-        code: u8,
-        regs: u8,
-        off: i16,
-        imm: i32,
+    pub(super) struct BpfInsn {
+        pub(super) code: u8,
+        pub(super) regs: u8,
+        pub(super) off: i16,
+        pub(super) imm: i32,
     }
 
     #[repr(C)]
@@ -1099,14 +1188,17 @@ mod linux {
             map_extra: 0,
         };
         // SAFETY: attributes is a stable, kernel-defined BPF_MAP_CREATE payload.
+        // Linux bpf syscall 以 c_long 回傳由 c_int 表示的 fd；ABI 保證其範圍。
         let fd = unsafe {
             syscall(
                 SYS_BPF,
                 BPF_MAP_CREATE,
-                (&attributes as *const BpfMapCreateAttr).cast::<c_void>(),
+                (&raw const attributes).cast::<c_void>(),
                 std::mem::size_of::<BpfMapCreateAttr>(),
             )
-        } as c_int;
+        };
+        let fd = c_int::try_from(fd)
+            .map_err(|_| AfXdpError::InvalidConfig("map fd exceeds c_int".to_owned()))?;
         if fd < 0 {
             return Err(kernel_error("bpf_map_create_xskmap"));
         }
@@ -1122,9 +1214,10 @@ mod linux {
         let value = u64::try_from(socket_fd)
             .map_err(|_| AfXdpError::InvalidConfig("socket fd is negative".to_owned()))?;
         let attributes = BpfMapElemAttr {
-            map_fd: map_fd as u32,
-            key: (&key as *const u64) as u64,
-            value: (&value as *const u64) as u64,
+            map_fd: u32::try_from(map_fd)
+                .map_err(|_| AfXdpError::InvalidConfig("map fd is negative".to_owned()))?,
+            key: (&raw const key) as u64,
+            value: (&raw const value) as u64,
             flags: 0,
         };
         // SAFETY: attributes contains valid key/value pointers for this syscall duration.
@@ -1132,7 +1225,7 @@ mod linux {
             syscall(
                 SYS_BPF,
                 BPF_MAP_UPDATE_ELEM,
-                (&attributes as *const BpfMapElemAttr).cast::<c_void>(),
+                (&raw const attributes).cast::<c_void>(),
                 std::mem::size_of::<BpfMapElemAttr>(),
             )
         };
@@ -1158,11 +1251,11 @@ mod linux {
         let mut log = vec![0_u8; 16 * 1024];
         let attributes = BpfProgLoadAttr {
             prog_type: BPF_PROG_TYPE_XDP,
-            insn_count: instructions.len() as u32,
+            insn_count: u32::try_from(instructions.len()).expect("BPF instruction count fits u32"),
             insns: instructions.as_ptr() as u64,
             license: license.as_ptr() as u64,
             log_level: 1,
-            log_size: log.len() as u32,
+            log_size: u32::try_from(log.len()).expect("BPF log size fits u32"),
             log_buf: log.as_mut_ptr() as u64,
             kern_version: 0,
             prog_flags: 0,
@@ -1187,32 +1280,39 @@ mod linux {
             fd_array_cnt: 0,
         };
         // SAFETY: all pointers reference live fixed buffers for syscall duration.
+        // Linux bpf syscall 以 c_long 回傳由 c_int 表示的 fd；ABI 保證其範圍。
         let program_fd = unsafe {
             syscall(
                 SYS_BPF,
                 BPF_PROG_LOAD,
-                (&attributes as *const BpfProgLoadAttr).cast::<c_void>(),
+                (&raw const attributes).cast::<c_void>(),
                 std::mem::size_of::<BpfProgLoadAttr>(),
             )
-        } as c_int;
+        };
+        let program_fd = c_int::try_from(program_fd)
+            .map_err(|_| AfXdpError::InvalidConfig("program fd exceeds c_int".to_owned()))?;
         if program_fd < 0 {
             return Err(kernel_error("bpf_prog_load_xdp_redirect"));
         }
         let link_attributes = BpfLinkCreateAttr {
-            prog_fd: program_fd as u32,
+            prog_fd: u32::try_from(program_fd)
+                .map_err(|_| AfXdpError::InvalidConfig("program fd is negative".to_owned()))?,
             target_fd: interface_index,
             attach_type: BPF_XDP,
             flags: 0,
         };
         // SAFETY: link attributes are a stable kernel payload and program fd is owned here.
+        // Linux bpf syscall 以 c_long 回傳由 c_int 表示的 fd；ABI 保證其範圍。
         let link_fd = unsafe {
             syscall(
                 SYS_BPF,
                 BPF_LINK_CREATE,
-                (&link_attributes as *const BpfLinkCreateAttr).cast::<c_void>(),
+                (&raw const link_attributes).cast::<c_void>(),
                 std::mem::size_of::<BpfLinkCreateAttr>(),
             )
-        } as c_int;
+        };
+        let link_fd = c_int::try_from(link_fd)
+            .map_err(|_| AfXdpError::InvalidConfig("link fd exceeds c_int".to_owned()))?;
         if link_fd < 0 {
             // SAFETY: program_fd was returned by BPF_PROG_LOAD and is closed once.
             unsafe { close(program_fd) };
@@ -1224,7 +1324,7 @@ mod linux {
         })
     }
 
-    fn redirect_instructions(map_fd: i32) -> [BpfInsn; 5] {
+    pub(super) fn redirect_instructions(map_fd: i32) -> [BpfInsn; 5] {
         [
             // r2 = ctx->rx_queue_index (xdp_md offset 16).
             BpfInsn {
@@ -1282,21 +1382,23 @@ mod linux {
 
     pub(super) fn query_ring_offsets(fd: i32) -> Result<XdpMmapOffsets, AfXdpError> {
         let mut raw = XdpMmapOffsetsRaw::default();
-        let mut length = std::mem::size_of::<XdpMmapOffsetsRaw>() as u32;
+        let offsets_size = u32::try_from(std::mem::size_of::<XdpMmapOffsetsRaw>())
+            .expect("XDP mmap offsets size fits u32");
+        let mut length = offsets_size;
         // SAFETY: raw and length are valid writable buffers for the kernel ABI.
         let status = unsafe {
             getsockopt(
                 fd,
                 SOL_XDP,
                 XDP_MMAP_OFFSETS,
-                (&mut raw as *mut XdpMmapOffsetsRaw).cast(),
-                &mut length,
+                (&raw mut raw).cast(),
+                &raw mut length,
             )
         };
         if status != 0 {
             return Err(kernel_error("getsockopt_mmap_offsets"));
         }
-        if length < std::mem::size_of::<XdpMmapOffsetsRaw>() as u32 {
+        if length < offsets_size {
             return Err(AfXdpError::Kernel {
                 operation: "getsockopt_mmap_offsets_short",
                 errno: 0,
@@ -1341,7 +1443,7 @@ mod linux {
                 XDP_UMEM_PGOFF_COMPLETION_RING,
             ),
         ];
-        let mut mapped = Vec::with_capacity(entries.len());
+        let mut mapped: Vec<super::XdpRingMapping> = Vec::with_capacity(entries.len());
         for (operation, count, offset, page_offset) in entries {
             let length = ring_mapping_length(count, offset)?;
             // SAFETY: kernel-provided ring offsets and fixed read/write shared mapping flags.
@@ -1363,7 +1465,7 @@ mod linux {
                 }
                 return Err(error);
             }
-            let address = NonNull::new(address.cast()).ok_or_else(|| AfXdpError::Kernel {
+            let address = NonNull::new(address.cast()).ok_or(AfXdpError::Kernel {
                 operation,
                 errno: 0,
             })?;
@@ -1417,14 +1519,15 @@ mod linux {
     }
 
     pub(super) fn wait_for_io(fd: i32, timeout: Duration) -> Result<bool, AfXdpError> {
-        let millis = timeout.as_millis().min(i32::MAX as u128) as c_int;
+        let millis = c_int::try_from(timeout.as_millis().min(i32::MAX as u128))
+            .expect("poll timeout was clamped to c_int::MAX");
         let mut poll_fd = PollFd {
             fd,
             events: POLLIN,
             revents: 0,
         };
         // SAFETY: poll_fd is a valid one-element pollfd array for the owned socket fd.
-        let result = unsafe { poll(&mut poll_fd, 1, millis) };
+        let result = unsafe { poll(&raw mut poll_fd, 1, millis) };
         if result < 0 {
             return Err(kernel_error("poll"));
         }
@@ -1519,8 +1622,9 @@ mod linux {
                     fd,
                     SOL_XDP,
                     XDP_UMEM_REG,
-                    (&registration as *const XdpUmemReg).cast(),
-                    std::mem::size_of::<XdpUmemReg>() as u32,
+                    (&raw const registration).cast(),
+                    u32::try_from(std::mem::size_of::<XdpUmemReg>())
+                        .expect("XDP UMEM registration size fits u32"),
                 )
             };
             if status != 0 {
@@ -1538,8 +1642,8 @@ mod linux {
                         fd,
                         SOL_XDP,
                         option,
-                        (&value as *const u32).cast(),
-                        std::mem::size_of::<u32>() as u32,
+                        (&raw const value).cast(),
+                        u32::try_from(std::mem::size_of::<u32>()).expect("u32 size fits u32"),
                     )
                 };
                 if status != 0 {
@@ -1552,7 +1656,7 @@ mod linux {
                 0
             };
             let address = SockaddrXdp {
-                family: AF_XDP as u16,
+                family: u16::try_from(AF_XDP).expect("AF_XDP fits sockaddr family"),
                 flags,
                 interface_index: index,
                 queue_id: config.queue_id,
@@ -1562,8 +1666,9 @@ mod linux {
             let status = unsafe {
                 bind(
                     fd,
-                    (&address as *const SockaddrXdp).cast(),
-                    std::mem::size_of::<SockaddrXdp>() as u32,
+                    (&raw const address).cast(),
+                    u32::try_from(std::mem::size_of::<SockaddrXdp>())
+                        .expect("XDP sockaddr size fits u32"),
                 )
             };
             if status != 0 {
@@ -1598,7 +1703,9 @@ mod linux {
 
 #[cfg(test)]
 mod tests {
-    use super::{AfXdpConfig, AfXdpError, FrameRing, UmemRegion};
+    #[cfg(not(target_os = "linux"))]
+    use super::AfXdpError;
+    use super::{AfXdpConfig, FrameRing, UmemRegion};
 
     #[test]
     fn validates_ring_sizes_and_interface_names() {

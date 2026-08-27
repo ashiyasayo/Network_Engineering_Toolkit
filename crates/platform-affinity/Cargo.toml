@@ -5,5 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
