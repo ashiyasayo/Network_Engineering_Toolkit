@@ -85,8 +85,11 @@ jobs:
         shell: pwsh
         run: |
           $names = @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe')
+          $wixManifest = Get-ChildItem target/release/wix -Recurse -File -Filter *.wxs | Select-Object -First 1
+          if (-not $wixManifest) { throw 'missing generated WiX manifest' }
           foreach ($name in $names) {
-            if (-not (Get-ChildItem target/release/bundle -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
+            if (-not (Test-Path -LiteralPath "apps/desktop/resources/$name" -PathType Leaf)) { throw "missing staged resource: $name" }
+            if (-not (Select-String -LiteralPath $wixManifest.FullName -Pattern $name -SimpleMatch -Quiet)) { throw "missing WiX resource: $name" }
           }
           if (-not (Get-ChildItem target/release/bundle -Recurse -File -Filter *.msi)) { throw 'missing MSI package' }
       - name: Upload desktop packages
