@@ -61,6 +61,8 @@ pub enum ErrorCode {
     LosslessCaptureNotCertified,
     /// Privileged Helper caller 未通過 peer authorization。
     HelperUnauthorized,
+    /// Privileged Helper transport 尚未設定。
+    HelperNotConfigured,
     /// Privileged Helper local transport 失敗。
     HelperTransportFailed,
     /// Privileged Helper 平台操作失敗。
@@ -102,11 +104,25 @@ impl ErrorCode {
             Self::BackendNotBuilt => "DATAPLANE.BACKEND_NOT_BUILT",
             Self::LosslessCaptureNotCertified => "LOSSLESS_CAPTURE_NOT_CERTIFIED",
             Self::HelperUnauthorized => "HELPER.UNAUTHORIZED",
+            Self::HelperNotConfigured => "HELPER.NOT_CONFIGURED",
             Self::HelperTransportFailed => "HELPER.TRANSPORT_FAILED",
             Self::HelperExecutionFailed => "HELPER.EXECUTION_FAILED",
             Self::CaptureFormatInvalid => "CAPTURE.FORMAT_INVALID",
             Self::CaptureReadFailed => "CAPTURE.READ_FAILED",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ErrorCode;
+
+    #[test]
+    fn helper_not_configured_code_is_stable() {
+        assert_eq!(
+            ErrorCode::HelperNotConfigured.as_str(),
+            "HELPER.NOT_CONFIGURED"
+        );
     }
 }
 

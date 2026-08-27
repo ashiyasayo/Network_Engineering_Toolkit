@@ -216,15 +216,9 @@ pub(super) async fn helper_call(
     operation
         .validate()
         .map_err(|message| NetToolError::new(ErrorCode::InvalidArgument, message, false))?;
-    let path = std::env::var_os("NETTOOL_HELPER_SOCKET").ok_or_else(|| {
-        NetToolError::new(
-            ErrorCode::Unsupported,
-            "privileged helper socket is not configured",
-            false,
-        )
-    })?;
+    let path = configured_helper_socket()?;
     let mut stream =
-        tokio::time::timeout(Duration::from_secs(2), connect_helper(PathBuf::from(path)))
+        tokio::time::timeout(Duration::from_secs(2), connect_helper(path))
             .await
             .map_err(|_| {
                 NetToolError::new(
@@ -350,6 +344,24 @@ pub(super) async fn helper_call(
     })
 }
 
+fn configured_helper_socket() -> Result<PathBuf, NetToolError> {
+    configured_helper_socket_from(std::env::var_os("NETTOOL_HELPER_SOCKET"))
+}
+
+fn configured_helper_socket_from(
+    path: Option<std::ffi::OsString>,
+) -> Result<PathBuf, NetToolError> {
+    path.map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| {
+            NetToolError::new(
+                ErrorCode::HelperNotConfigured,
+                "privileged helper socket is not configured",
+                false,
+            )
+        })
+}
+
 #[cfg(unix)]
 async fn connect_helper(path: PathBuf) -> Result<UnixStream, std::io::Error> {
     UnixStream::connect(path).await
@@ -359,4 +371,25 @@ async fn connect_helper(path: PathBuf) -> Result<UnixStream, std::io::Error> {
 #[allow(clippy::unused_async)]
 async fn connect_helper(path: PathBuf) -> Result<NamedPipeClient, std::io::Error> {
     ClientOptions::new().open(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_helper_socket_from;
+    use nettool_error::ErrorCode;
+
+    #[test]
+    fn missing_helper_socket_fails_closed_with_explicit_code() {
+        let error = configured_helper_socket_from(None).expect_err("socket must be configured");
+        assert_eq!(error.code, ErrorCode::HelperNotConfigured);
+        assert_eq!(error.message, "privileged helper socket is not configured");
+        assert!(!error.retryable);
+    }
+
+    #[test]
+    fn empty_helper_socket_fails_closed_with_explicit_code() {
+        let error = configured_helper_socket_from(Some(std::ffi::OsString::new()))
+            .expect_err("empty socket must be rejected");
+        assert_eq!(error.code, ErrorCode::HelperNotConfigured);
+    }
 }

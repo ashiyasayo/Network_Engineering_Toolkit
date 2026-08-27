@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 新增 Windows `nettool-windows-x64-portable.zip`，包含 desktop shell、Agent、GUI、dataplane、授權文件與 portable 限制說明；Release workflow 新增跨平台 bundle smoke test。
+- 無 Helper 的 privileged action 現在回傳穩定的 `HELPER.NOT_CONFIGURED`；文件明確列出 portable bundle 的功能邊界，已設定但無法連線則維持可重試的 `HELPER.TRANSPORT_FAILED`。
+- Release workflow 新增 prerelease/stable gate：stable 由 workflow dispatch 明確選擇，並以 secrets 啟用 Windows Authenticode、macOS Developer ID codesign/notarization/stapling 與 Linux GPG detached artifact signatures；簽章設定不完整時 fail closed。
 - Linux 唯讀 NIC 探測新增 `bus_type`（`usb`、`pci`、`unknown`）；只有合法 PCI BDF 才填入 `pci_address`，並將結果帶到 `interface.list/show`、`dataplane.probe`、`perf.topology` 與 `nettool-dataplane probe`。這不包含 USB hot-plug、auto-provision 或實體硬體驗收。
 - 依 2026-08-24 設計分析拆分 Agent runtime action modules（profile、hosts、node、perf 等）、Node TCP/UDP/bidirectional prepare modules，以及 Helper macOS/Windows platform modules；外部 Action/CLI wire contract 維持不變。
 - Storage production crate 不再依賴 `nettool-benchmark` evaluator；benchmark evaluation 改由 application layer 完成，Storage 只接受明確 `BenchmarkCertificationState` 與 caller checksum，並驗證 canonical artifact checksum、platform hash 與 SQLite invariants。

@@ -13,7 +13,7 @@
 |---|:---:|---|---|
 | **1. 測試策略與覆蓋率** | 🟡 **良好 (7.5/10)** | 目前靜態計數約 237 個測試、封包熱路徑覆蓋紮實 | Windows/macOS loopback 已納入 CI 設定，真實 100G 硬體仍未接上 CI |
 | **2. 安全模型與邊界** | 🟢 **卓越 (9.0/10)** | 權限最小化、Helper Whitelist、mTLS 1.3 + Out-of-band 指紋 | Windows reader 已改為固定 JSON query，仍需 Windows smoke test 與 Named Pipe ACL 實機驗證 |
-| **3. 部署與打包交付** | 🟡 **中等 (7.0/10)** | Tauri 2 跨平台打包 sidecars、Release CI 自動化解包驗證 | 缺少 Apple/Windows 正式簽章、特權 Helper 需手動分開安裝 |
+| **3. 部署與打包交付** | 🟡 **中等 (7.5/10)** | Tauri 2 跨平台打包 sidecars、Windows portable ZIP、Release CI bundle smoke test 與 stable signing gate | stable 仍需外部憑證實際執行；特權 Helper 需手動分開安裝 |
 | **4. 效能與並發架構** | 🟢 **優良 (8.5/10)** | 封包 Hot Path 零記憶體配置、Bounded flow table | Mutex 仍存在，但目前未有長時間 worker 持鎖 await 的證據；需以 regression test 維護邊界 |
 | **5. 程式碼品質與可觀測性** | 🟡 **兩極 (7.0/10)** | 長駐 binary 已有 stderr structured tracing 與 request correlation | 其他短命工具仍保留原始輸出；本輪不加入 file/syslog/EventLog |
 
@@ -69,10 +69,10 @@
 
 ### 1. 打包成熟度
 - **Sidecar 集中管理**：透過 Tauri 2 bundle 將 `nettool` (CLI)、`nettool-agent`、`nettool-gui`、`nettool-dataplane` 一併打包進各平台安裝包（Linux AppImage/deb、macOS dmg/app、Windows msi）。
-- **CI 自動解包驗證**：GitHub Actions 在 release 時會自動解開 deb、squashfs-root 與 MSI，驗證 4 個 sidecar 二進制檔與 License 完整無缺。
+- **CI 自動解包驗證**：GitHub Actions 在 release 時會自動解開 deb、squashfs-root、DMG app、MSI 與 Windows portable ZIP，驗證 sidecar、desktop executable、portable manifest 與 License 完整無缺。
 
 ### 2. 交付痛點
-- **程式碼簽章缺失**：macOS 尚未設定 Apple Developer ID + Notarization，Windows 尚未設定 Authenticode 憑證。一般使用者下載後可能觸發 Gatekeeper / SmartScreen 警告或政策限制。
+- **程式碼簽章仍受外部條件限制**：Release workflow 已提供 stable preflight 與 Apple Developer ID、Windows Authenticode、Linux GPG artifact signing 實作；目前 repository 尚未提供外部憑證與 notarization credentials，因此未宣稱已有實際 stable release。
 - **特權 Helper 的安裝斷層**：桌面安裝包（MSI/DMG/Deb）只安裝了使用者層級的 App 與 sidecars，**沒有包含特權 Helper 的 Service 註冊**。網管如果需要修改 IP/DNS，仍必須另外以 root 執行 `install-helper.sh` 或手動設定 Service，UX 存在斷層。
 
 ---
@@ -108,7 +108,7 @@
 |:---:|---|---|
 | **P0** | **引入 `tracing` 結構化日誌** | ✅ 已完成最小範圍：三個長駐 binary 使用 stderr formatter/EnvFilter 與關聯欄位；不加入外部 sink。 |
 | **P1** | **解決 Windows 多語系 state reader** | 🟡 程式修正已完成、實機驗證部分完成：固定 PowerShell JSON query、typed schema、獨立 argv 與 fail-closed parser；netsh apply builder 保留。 |
-| **P1** | **簽章與 Helper 安裝整合** | ⏸ 延後：缺少外部憑證與 Windows/macOS installer 安全決策；維持 prerelease gate，不假造正式安裝器。 |
+| **P1** | **簽章與 Helper 安裝整合** | 🟡 Release signing gate、Windows portable ZIP 與無 Helper fail-closed contract 已完成；實際 Apple/Windows/Linux credentials、macOS/Windows privileged service 註冊與正式 installer UX 仍需外部驗收。 |
 | **P2** | **細粒度鎖優化** | ✅ 維持現況並完成 source-level lock scope review；不導入 `RwLock`/Actor，後續以 deterministic regression test 維護。 |
 | **P2** | **補齊非 Linux 平台的整合測試** | 🟡 修正已完成：CI 已改為三平台執行現有 ignored Agent/Speed/Node loopback suite；本機 Windows runner 已通過，GitHub Ubuntu/macOS 尚待實際通過。 |
 
@@ -118,8 +118,15 @@
 |---|---|---|---|
 | **A：結構化 tracing** | ✅ **已完成最小範圍** | `apps/agent/src/main.rs`、`apps/helper/src/main.rs`、`apps/gui/src/main.rs` 初始化 `EnvFilter`/stderr formatter；action、request、operation、peer、success/error code、elapsed 欄位已接入。 | 短命 CLI 的完整輸出結構化、file/syslog/EventLog sink 不在本輪。 |
 | **B：Windows 多語系 state reader** | 🟡 **程式修正完成；實機驗證部分完成** | `crates/helper-core/src/platform_network_windows.rs` 使用固定 absolute PowerShell、無 BOM UTF-8 stdout、versioned JSON schema、獨立 alias argv；`platform_network.rs` 僅允許 exact fixed query，malformed/unknown schema、不可表示 route/gateway 等 fail closed；並有 query tampering、runner failure、interface mismatch 與非法 state fixture tests；`netsh.exe` apply builder 保留。 | 目前 Windows runner 的實際 PowerShell smoke test 受非系統管理員權限限制；Named Pipe ACL、真實 NIC rollback 與跨版本/多語系 Windows 仍待專用 runner。 |
-| **C：簽章與 Helper 安裝整合** | ⏸ **延後** | 目前只有 unsigned/prerelease 與 allowlist staging 流程；沒有提交憑證或繞過平台安全政策。 | Apple Developer ID/Notarization、Windows Authenticode、macOS/Windows privileged service 註冊與正式 installer UX 仍需外部憑證及安全決策。 |
+| **C：簽章與 Helper 安裝整合** | 🟡 **gate 已完成；外部驗收待完成** | `.github/workflows/release.yml` 以 `workflow_dispatch` 的 `stable` 模式要求完整 secrets，實作 Windows Authenticode、macOS codesign/notarization/stapling 與 Linux GPG detached signatures；portable bundle 與無 Helper 限制也已文件化並測試。 | repository 尚未配置外部憑證；macOS/Windows privileged service 註冊、ACL、rollback 與正式 installer UX 仍需專用平台驗收。 |
 | **D：coordinator lock scope** | ✅ **已完成目前要求** | `crates/node/src/server.rs` 的 `with_coordinator` 在 guard 釋放後才進入 worker await，並有 `coordinator_lock_is_released_before_worker_await` deterministic regression test。 | 未導入 `RwLock`/Actor；尚未以長時間 production profiling 證明不存在其他 contention。 |
 | **E：跨平台 loopback CI** | 🟡 **CI 修正完成；跨平台實際結果部分完成** | `.github/workflows/ci.yml` 的 Ubuntu/macOS/Windows matrix 都執行 Agent、Speed、Node ignored loopback suite；目前 Windows runner 的三組 suite 通過。 | GitHub Ubuntu/macOS job 實際結果、真實 100GbE、AF_XDP/DPDK/RIO hardware acceptance 仍待完成。 |
 
-因此目前不能把整份稽核標示為「全部完成」：A、D 已完成；B、E 是「修正完成但外部驗收未全覆蓋」；C 是明確延期。文件中的分數與 production-ready 判定應維持此限制，不得以目前 Windows runner 的通過結果代替多平台或真實硬體證據。
+因此目前不能把整份稽核標示為「全部完成」：A、D 已完成；B、E 是「修正完成但外部驗收未全覆蓋」；C 已由延期改為「release gate 完成、憑證與 Helper 平台驗收待完成」。文件中的分數與 production-ready 判定應維持此限制，不得以 workflow 的靜態 gate 或目前 Windows runner 的通過結果代替多平台、正式憑證或真實硬體證據。
+
+## 本次實作更新（2026-08-27）
+
+- Release workflow 新增 Windows `nettool-windows-x64-portable.zip`，包含 `nettool.exe`、`nettool-desktop.exe`、`nettool-agent.exe`、`nettool-gui.exe`、`nettool-dataplane.exe`、授權文件與 portable 限制說明。
+- Ubuntu、macOS、Windows release job 都執行 portable bundle smoke test；Windows 驗證 ZIP 內容與 stable 模式的 Authenticode 狀態，Linux stable 模式額外上傳 AppImage/deb 的 `.asc` detached signatures。
+- 沒有 `NETTOOL_HELPER_SOCKET` 時，privileged actions 改以穩定 `HELPER.NOT_CONFIGURED` fail closed；transport 已設定但無法連線仍使用可重試的 `HELPER.TRANSPORT_FAILED`。
+- stable release 只能由 `workflow_dispatch` 明確選擇，preflight 會要求 Apple、Windows 與 Linux signing secrets；tag push 維持 prerelease，避免在沒有外部憑證時產生未簽章正式版本。

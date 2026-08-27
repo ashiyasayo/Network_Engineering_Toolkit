@@ -1,6 +1,6 @@
 # Linux Helper Installation
 
-`nettool-helper` 必須安裝為 root-owned `/usr/libexec/nettool-helper`，並由 systemd unit 啟動。安裝程式需完成：
+`nettool-helper` 必須安裝為 root-owned `/usr/libexec/nettool-helper`，並由 systemd unit 啟動。GitHub Actions 的 stable release 會為 AppImage 與 deb 產生 ASCII-armored detached GPG signatures (`.asc`)；prerelease 不含這些簽章檔。安裝程式需完成：
 
 桌面 shell 可由 `install-desktop.sh --source-directory <release-dir> --dry-run` 驗證，移除 `--dry-run` 後安裝至 `/opt/nettool` 並註冊 `/usr/share/applications/nettool.desktop`；自訂 prefix 時會同步產生正確的 `Exec` 路徑。此步驟不會以 root 執行 GUI；root 權限只用於安裝檔案，特權網路操作仍由獨立 helper 負責。
 

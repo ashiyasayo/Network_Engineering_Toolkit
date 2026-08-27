@@ -4,12 +4,75 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_mode:
+        description: 'prerelease 只產生未簽章測試套件；stable 需要完整平台簽章憑證'
+        required: true
+        type: choice
+        options:
+          - prerelease
+          - stable
+        default: prerelease
+
+env:
+  RELEASE_MODE: ${{ github.event.inputs.release_mode || 'prerelease' }}
 
 permissions:
   contents: read
 
 jobs:
+  release-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release mode and tag ref
+        run: |
+          set -eu
+          case "$RELEASE_MODE" in
+            prerelease|stable) ;;
+            *) echo "::error::unsupported RELEASE_MODE: $RELEASE_MODE"; exit 1 ;;
+          esac
+          test "$GITHUB_REF_TYPE" = tag
+
+      - name: Require stable release signing secrets
+        if: env.RELEASE_MODE == 'stable'
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          LINUX_GPG_PRIVATE_KEY_BASE64: ${{ secrets.LINUX_GPG_PRIVATE_KEY_BASE64 }}
+          LINUX_GPG_KEY_ID: ${{ secrets.LINUX_GPG_KEY_ID }}
+          LINUX_GPG_PASSPHRASE: ${{ secrets.LINUX_GPG_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -eu
+          missing=0
+          require_secret() {
+            if [ -z "$2" ]; then
+              echo "::error::missing stable release secret $1"
+              missing=1
+            fi
+          }
+          require_secret APPLE_CERTIFICATE_BASE64 "$APPLE_CERTIFICATE_BASE64"
+          require_secret APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+          require_secret APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
+          require_secret APPLE_ID "$APPLE_ID"
+          require_secret APPLE_TEAM_ID "$APPLE_TEAM_ID"
+          require_secret APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD"
+          require_secret WINDOWS_CERTIFICATE_BASE64 "$WINDOWS_CERTIFICATE_BASE64"
+          require_secret WINDOWS_CERTIFICATE_PASSWORD "$WINDOWS_CERTIFICATE_PASSWORD"
+          require_secret LINUX_GPG_PRIVATE_KEY_BASE64 "$LINUX_GPG_PRIVATE_KEY_BASE64"
+          require_secret LINUX_GPG_KEY_ID "$LINUX_GPG_KEY_ID"
+          require_secret LINUX_GPG_PASSPHRASE "$LINUX_GPG_PASSPHRASE"
+          test "$missing" -eq 0
+
   build:
+    needs: release-preflight
     strategy:
       matrix:
         include:
@@ -23,7 +86,9 @@ jobs:
             files: target/release/bundle/**/*.dmg
           - os: windows-latest
             bundles: msi
-            files: target/release/bundle/**/*.msi
+            files: |
+              target/release/bundle/**/*.msi
+              target/release/bundle/**/*-portable.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -60,13 +125,149 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force apps/desktop/resources | Out-Null
           foreach ($name in @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe')) {
             Copy-Item "target/release/$name" "apps/desktop/resources/$name" -Force
           }
+      - name: Sign Windows binaries for MSI resources
+        if: runner.os == 'Windows' && env.RELEASE_MODE == 'stable'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'nettool-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+            $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe is not available on the Windows runner' }
+            $targets = @(
+              'target/release/nettool.exe',
+              'target/release/nettool-desktop.exe',
+              'target/release/nettool-agent.exe',
+              'target/release/nettool-gui.exe',
+              'target/release/nettool-dataplane.exe'
+            ) + @(Get-ChildItem apps/desktop/resources -File -Filter '*.exe' | Select-Object -ExpandProperty FullName)
+            foreach ($target in $targets) {
+              if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw "missing binary to sign: $target" }
+              & $signtool.Source sign /fd SHA256 /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr 'https://timestamp.digicert.com' /td SHA256 $target
+              if ($LASTEXITCODE -ne 0) { throw "signtool failed for $target" }
+            }
+          }
+          finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+          }
       - name: Build Tauri packages
         run: cd apps/desktop && cargo tauri build --bundles ${{ matrix.bundles }}
-      - name: Verify expected package files
+      - name: Prepare Windows portable directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $portable = Join-Path $env:RUNNER_TEMP 'nettool-windows-x64-portable'
+          New-Item -ItemType Directory -Force $portable | Out-Null
+          foreach ($name in @('nettool.exe','nettool-desktop.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe')) {
+            Copy-Item "target/release/$name" (Join-Path $portable $name) -Force
+          }
+          Copy-Item 'packaging/PORTABLE-README.md' (Join-Path $portable 'README-portable.md') -Force
+          foreach ($name in @('LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
+            Copy-Item $name (Join-Path $portable $name) -Force
+          }
+      - name: Sign Windows MSI
+        if: runner.os == 'Windows' && env.RELEASE_MODE == 'stable'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'nettool-signing-msi.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+            $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe is not available on the Windows runner' }
+            $msi = Get-ChildItem target/release/bundle -Recurse -File -Filter '*.msi' | Select-Object -First 1
+            if (-not $msi) { throw 'missing MSI package to sign' }
+            & $signtool.Source sign /fd SHA256 /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr 'https://timestamp.digicert.com' /td SHA256 $msi.FullName
+            if ($LASTEXITCODE -ne 0) { throw 'signtool failed for MSI' }
+          }
+          finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+          }
+      - name: Create Windows portable ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $portable = Join-Path $env:RUNNER_TEMP 'nettool-windows-x64-portable'
+          $archive = 'target/release/bundle/nettool-windows-x64-portable.zip'
+          New-Item -ItemType Directory -Force (Split-Path -Parent $archive) | Out-Null
+          Compress-Archive -Path (Join-Path $portable '*') -DestinationPath $archive -CompressionLevel Optimal -Force
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'failed to create Windows portable ZIP' }
+      - name: Sign Linux release artifacts
+        if: runner.os == 'Linux' && env.RELEASE_MODE == 'stable'
+        shell: bash
+        env:
+          LINUX_GPG_PRIVATE_KEY_BASE64: ${{ secrets.LINUX_GPG_PRIVATE_KEY_BASE64 }}
+          LINUX_GPG_KEY_ID: ${{ secrets.LINUX_GPG_KEY_ID }}
+          LINUX_GPG_PASSPHRASE: ${{ secrets.LINUX_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          gpg_home="$(mktemp -d)"
+          chmod 700 "$gpg_home"
+          cleanup() { rm -rf "$gpg_home"; }
+          trap cleanup EXIT
+          export GNUPGHOME="$gpg_home"
+          printf '%s' "$LINUX_GPG_PRIVATE_KEY_BASE64" | base64 --decode | gpg --batch --import
+          gpg --batch --list-secret-keys "$LINUX_GPG_KEY_ID" >/dev/null
+          while IFS= read -r artifact; do
+            printf '%s' "$LINUX_GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --local-user "$LINUX_GPG_KEY_ID" --armor --detach-sign --output "$artifact.asc" "$artifact"
+          done < <(find target/release/bundle -type f \( -name '*.AppImage' -o -name '*.deb' \) -print)
+      - name: Sign and notarize macOS release
+        if: runner.os == 'macOS' && env.RELEASE_MODE == 'stable'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          app="$(find target/release/bundle -type d -name '*.app' -print -quit)"
+          dmg="$(find target/release/bundle -type f -name '*.dmg' -print -quit)"
+          test -n "$app"; test -n "$dmg"
+          certificate="$RUNNER_TEMP/nettool-signing.p12"
+          keychain="$RUNNER_TEMP/nettool-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          cleanup() {
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            rm -f "$certificate"
+          }
+          trap cleanup EXIT
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -s "$keychain"
+          codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          dmg_root="$RUNNER_TEMP/nettool-dmg-root"
+          signed_dmg="$RUNNER_TEMP/nettool-signed.dmg"
+          mkdir -p "$dmg_root"
+          cp -R "$app" "$dmg_root/"
+          hdiutil create -volname NetTool -srcfolder "$dmg_root" -ov -format UDZO "$signed_dmg" >/dev/null
+          mv -f "$signed_dmg" "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+      - name: Portable bundle smoke test
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -82,18 +283,29 @@ jobs:
               for name in nettool nettool-agent nettool-gui nettool-dataplane LICENSE.md LICENSE-MIT LICENSE-APACHE; do
                 find "$root" -type f -name "$name" -print -quit | grep -q .
               done
+              for name in nettool nettool-agent nettool-gui nettool-dataplane; do
+                executable="$(find "$root" -type f -name "$name" -perm -111 -print -quit)"
+                test -n "$executable"
+              done
             done
+            if [ "$RELEASE_MODE" = stable ]; then
+              for artifact in "$appimage" "$deb"; do
+                test -f "$artifact.asc"
+              done
+            fi
           else
             dmg="$(find target/release/bundle -type f -name '*.dmg' -print -quit)"; test -n "$dmg"
             app="$(find target/release/bundle -type d -name '*.app' -print -quit)"; test -n "$app"
+            main_binary="$(find "$app/Contents/MacOS" -type f -perm -111 -print -quit)"; test -n "$main_binary"
             for name in nettool-agent nettool-gui nettool-dataplane LICENSE.md LICENSE-MIT LICENSE-APACHE; do
               find "$app" -type f -name "$name" -print -quit | grep -q .
             done
           fi
-      - name: Verify Windows package files
+      - name: Portable bundle smoke test
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $msi = Get-ChildItem target/release/bundle -Recurse -File -Filter *.msi | Select-Object -First 1
           if (-not $msi) { throw 'missing MSI package' }
           $extract = Join-Path $env:RUNNER_TEMP 'nettool-msi'
@@ -102,11 +314,38 @@ jobs:
           foreach ($name in @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe','LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
             if (-not (Get-ChildItem $extract -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
           }
+          $zip = Get-ChildItem target/release/bundle -Recurse -File -Filter '*-portable.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'missing Windows portable ZIP package' }
+          $portableExtract = Join-Path $env:RUNNER_TEMP 'nettool-portable'
+          New-Item -ItemType Directory -Force $portableExtract | Out-Null
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $portableExtract -Force
+          foreach ($name in @('nettool.exe','nettool-desktop.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe','README-portable.md','LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
+            if (-not (Get-ChildItem $portableExtract -Recurse -File -Filter $name)) { throw "missing portable resource: $name" }
+          }
+          if ($env:RELEASE_MODE -eq 'stable') {
+            foreach ($path in @(
+              $msi.FullName,
+              (Join-Path $portableExtract 'nettool.exe'),
+              (Join-Path $portableExtract 'nettool-desktop.exe'),
+              (Join-Path $portableExtract 'nettool-agent.exe'),
+              (Join-Path $portableExtract 'nettool-gui.exe'),
+              (Join-Path $portableExtract 'nettool-dataplane.exe')
+            )) {
+              if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne 'Valid') { throw "invalid Authenticode signature: $path" }
+            }
+          }
       - name: Upload package artifact
         uses: actions/upload-artifact@v6
         with:
           name: nettool-${{ matrix.os }}
           path: ${{ matrix.files }}
+          if-no-files-found: error
+      - name: Upload Linux signatures
+        if: runner.os == 'Linux' && env.RELEASE_MODE == 'stable'
+        uses: actions/upload-artifact@v6
+        with:
+          name: nettool-linux-signatures
+          path: target/release/bundle/**/*.asc
           if-no-files-found: error
 
   publish:
@@ -128,9 +367,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release-files/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --generate-notes \
-            --prerelease \
+          set -eu
+          release_files=()
+          while IFS= read -r -d '' file; do
+            release_files+=("$file")
+          done < <(find release-files -type f -print0)
+          test "${#release_files[@]}" -gt 0
+          release_args=(
+            "$GITHUB_REF_NAME"
+            "${release_files[@]}"
+            --repo "$GITHUB_REPOSITORY"
+            --verify-tag
+            --generate-notes
             --title "NetTool $GITHUB_REF_NAME"
+          )
+          if [ "$RELEASE_MODE" != stable ]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "${release_args[@]}"

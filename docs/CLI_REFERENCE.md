@@ -138,7 +138,14 @@ Agent 管理的 capture lifecycle 可使用 `nettool packet capture start --inte
 
 介面查詢可使用 `nettool interface list`、`nettool interface show <name-or-id>` 與 `nettool interface refresh`；輸出包含 `bus_type`、driver、link speed、RX/TX queues 與 NUMA node。Linux 讀取 sysfs，只有合法 PCI BDF 才填入 `pci_address`，USB 或無法判定的 path 會回傳 `bus_type: "unknown"` 或 `"usb"` 並保留 PCI address 為 `null`。macOS 使用 `/sbin/ifconfig -l`，Windows 使用固定 PowerShell `Get-NetAdapter`；這兩個平台目前不從該介面列舉結果推論 USB bus，無法由平台 API 證明的欄位會保持 `null`。
 
-網路設定操作使用 `nettool profile apply <id-or-name> --interface <id> [--confirm-timeout <seconds>]`（`--timeout` 為相容別名），完成後以 `nettool profile confirm <operation-id>` 或 `nettool profile rollback <operation-id>` 結束 Safe Apply；`nettool hosts list` 讀取目前 hosts，`nettool hosts replace <profile-id> '<entries-json>'`、`nettool hosts add <profile-id> <address> <hostname> [comment]`、`nettool hosts remove <profile-id> <hostname>`、`nettool hosts enable <profile-id> <hostname>`、`nettool hosts disable <profile-id> <hostname>`、`nettool hosts backup` 與 `nettool hosts restore` 透過同一 privileged Helper 寫入指定 managed section 或 Helper-owned backup。停用項目以受控 marker 保留，Agent 未設定 `NETTOOL_HELPER_SOCKET` 時會明確回報 unsupported，不會直接執行特權命令。
+網路設定操作使用 `nettool profile apply <id-or-name> --interface <id> [--confirm-timeout <seconds>]`（`--timeout` 為相容別名），完成後以 `nettool profile confirm <operation-id>` 或 `nettool profile rollback <operation-id>` 結束 Safe Apply；`nettool hosts list` 讀取目前 hosts，`nettool hosts replace <profile-id> '<entries-json>'`、`nettool hosts add <profile-id> <address> <hostname> [comment]`、`nettool hosts remove <profile-id> <hostname>`、`nettool hosts enable <profile-id> <hostname>`、`nettool hosts disable <profile-id> <hostname>`、`nettool hosts backup` 與 `nettool hosts restore` 透過同一 privileged Helper 寫入指定 managed section 或 Helper-owned backup。停用項目以受控 marker 保留，Agent 未設定 `NETTOOL_HELPER_SOCKET` 時會回報 `HELPER.NOT_CONFIGURED`（`privileged helper socket is not configured`），不會直接執行特權命令。
+
+## Portable / 無 Helper 模式
+
+Windows `nettool-windows-x64-portable.zip` 解壓縮後可直接執行 `nettool-desktop.exe`，不需要安裝器；desktop shell 會從同一目錄尋找 `nettool.exe`、`nettool-agent.exe`、`nettool-gui.exe` 與 `nettool-dataplane.exe`。Portable bundle 不會安裝或啟動 privileged Helper。
+
+沒有 `NETTOOL_HELPER_SOCKET` 時，`profile apply/confirm/rollback`、`ip set`、`ip dhcp`、`dns set` 與所有 `hosts` actions（包含 `hosts list`）會以 `HELPER.NOT_CONFIGURED` 失敗且不可重試；已設定 transport 但連線失敗或逾時則回傳可重試的 `HELPER.TRANSPORT_FAILED`。要求未連結 accelerated backend 時，Agent 會回傳 `DATAPLANE.BACKEND_NOT_BUILT`，不會回退成模擬結果。需要系統網路或 Hosts 變更時，請依平台另行安裝並啟動 Helper。
+
 ### `speed history`
 
 `nettool speed history [--limit <n>] [--format csv]` 查詢非敏感測速歷史；CSV 輸出固定欄位並對逗號、引號與換行做 quoting。
