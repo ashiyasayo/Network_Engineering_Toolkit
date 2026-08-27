@@ -5,3 +5,25 @@ apps/desktop/resources/nettool*
 *.DS_Store
 *.pcap
 *.pcapng
+
+# 本機環境設定與發布簽章材料不得進入 repository
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+*.credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+*.asc
+*.gpg
+*.crt
+*.cer
+*.der
+/secrets/
+/credentials/

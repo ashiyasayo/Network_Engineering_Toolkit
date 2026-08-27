@@ -1,5 +1,11 @@
 # Security Model
 
+## 原始碼與發布機敏資料
+
+`.env`、憑證、私鑰、簽章輸出與 credentials 目錄只允許存在於本機或受控的 CI secret store；`.gitignore` 已排除常見副檔名，但不能取代提交前檢查。GitHub Release 的 Apple、Windows 與 Linux 簽章材料只能透過 GitHub Actions secrets 提供，不能寫入 workflow、文件、測試 fixture 或 release artifact staging 目錄。
+
+公開 repository 的 Git commit metadata 可能包含作者 email；後續提交應使用 GitHub 提供的 `noreply` email。既有公開歷史不在一般修正中改寫，若必須移除 metadata 需另行核准 history rewrite、force-push 與所有受影響 credential 的輪替。
+
 ## Trust boundaries
 
 ```text
