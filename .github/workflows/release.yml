@@ -381,7 +381,22 @@ jobs:
             --generate-notes
             --title "NetTool $GITHUB_REF_NAME"
           )
-          if [ "$RELEASE_MODE" != stable ]; then
+          if [ "$RELEASE_MODE" = stable ]; then
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$GITHUB_REF_NAME" "${release_files[@]}" \
+                --repo "$GITHUB_REPOSITORY" \
+                --clobber
+              gh release edit "$GITHUB_REF_NAME" \
+                --repo "$GITHUB_REPOSITORY" \
+                --verify-tag \
+                --title "NetTool $GITHUB_REF_NAME" \
+                --latest \
+                --prerelease=false \
+                --draft=false
+            else
+              gh release create "${release_args[@]}"
+            fi
+          else
             release_args+=(--prerelease)
+            gh release create "${release_args[@]}"
           fi
-          gh release create "${release_args[@]}"
