@@ -14,7 +14,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg", "deb", "appimage", "msi"],
-    "icon": ["icons/icon.svg", "icons/icon.ico"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
     "resources": ["resources/*", "../../LICENSE.md", "../../LICENSE-MIT", "../../LICENSE-APACHE"],
     "category": "Utility",
     "shortDescription": "Cross-platform network engineering toolkit",

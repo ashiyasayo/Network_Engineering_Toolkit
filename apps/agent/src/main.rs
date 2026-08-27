@@ -941,7 +941,7 @@ mod agent_runtime {
         use super::action_dispatch::execute_with_runtime;
         use super::action_hosts::parse_managed_hosts;
         #[cfg(target_os = "linux")]
-        use super::action_packet::execute_packet_stats;
+        use super::action_packet::{execute_packet_connections, execute_packet_stats};
         use super::action_perf::execute as execute_perf;
         use super::action_speed::validate_request as validate_speed_request;
         use super::{AgentRuntime, handle_node_connection, hex_node_id};
