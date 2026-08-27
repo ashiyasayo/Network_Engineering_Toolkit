@@ -9,7 +9,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -44,7 +44,7 @@ jobs:
             bundles: msi
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
@@ -93,7 +93,7 @@ jobs:
           }
           if (-not (Get-ChildItem target/release/bundle -Recurse -File -Filter *.msi)) { throw 'missing MSI package' }
       - name: Upload desktop packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nettool-${{ matrix.os }}-desktop-packages
           path: target/release/bundle/**

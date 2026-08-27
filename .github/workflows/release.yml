@@ -26,7 +26,7 @@ jobs:
             files: target/release/bundle/**/*.msi
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -103,7 +103,7 @@ jobs:
             if (-not (Get-ChildItem $extract -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
           }
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nettool-${{ matrix.os }}
           path: ${{ matrix.files }}
@@ -115,10 +115,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: release-files
           merge-multiple: true
