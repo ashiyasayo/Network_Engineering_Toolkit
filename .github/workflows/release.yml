@@ -326,9 +326,20 @@ jobs:
           if (-not $msi) { throw 'missing MSI package' }
           $extract = Join-Path $env:RUNNER_TEMP 'nettool-msi'
           New-Item -ItemType Directory -Force $extract | Out-Null
-          7z x $msi.FullName "-o$extract" -y | Out-Null
+          $msiLog = Join-Path $env:RUNNER_TEMP 'nettool-msi-admin.log'
+          $msiexec = Start-Process -FilePath msiexec.exe -ArgumentList @(
+            '/a',
+            ('"{0}"' -f $msi.FullName),
+            ('TARGETDIR="{0}"' -f $extract),
+            '/qn',
+            '/norestart',
+            '/l*v',
+            ('"{0}"' -f $msiLog)
+          ) -Wait -PassThru -NoNewWindow
+          if ($msiexec.ExitCode -ne 0) { throw "MSI administrative extraction failed with exit code $($msiexec.ExitCode)" }
+          $installedRoot = Join-Path $extract 'PFiles\NetTool'
           foreach ($name in @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe','LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
-            if (-not (Get-ChildItem $extract -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
+            if (-not (Get-ChildItem $installedRoot -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
           }
           $zip = Get-ChildItem target/release/bundle -Recurse -File -Filter '*-portable.zip' | Select-Object -First 1
           if (-not $zip) { throw 'missing Windows portable ZIP package' }
