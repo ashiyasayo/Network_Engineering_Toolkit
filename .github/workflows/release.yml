@@ -82,7 +82,7 @@ jobs:
               target/release/bundle/**/*.AppImage
               target/release/bundle/**/*.deb
           - os: macos-latest
-            bundles: dmg
+            bundles: app,dmg
             files: target/release/bundle/**/*.dmg
           - os: windows-latest
             bundles: msi
@@ -267,7 +267,7 @@ jobs:
           xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
-      - name: Portable bundle smoke test
+      - name: Package smoke test
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -295,10 +295,26 @@ jobs:
             fi
           else
             dmg="$(find target/release/bundle -type f -name '*.dmg' -print -quit)"; test -n "$dmg"
-            app="$(find target/release/bundle -type d -name '*.app' -print -quit)"; test -n "$app"
+            tmp="$(mktemp -d)"
+            mountpoint="$tmp/mount"
+            mkdir -p "$mountpoint"
+            cleanup() {
+              hdiutil detach "$mountpoint" >/dev/null 2>&1 || true
+              rm -rf "$tmp"
+            }
+            trap cleanup EXIT
+            hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" "$dmg" >/dev/null
+            app="$(find "$mountpoint" -type d -name '*.app' -print -quit)"
+            if [ -z "$app" ]; then
+              echo 'missing application bundle in DMG' >&2
+              exit 1
+            fi
             main_binary="$(find "$app/Contents/MacOS" -type f -perm -111 -print -quit)"; test -n "$main_binary"
             for name in nettool-agent nettool-gui nettool-dataplane LICENSE.md LICENSE-MIT LICENSE-APACHE; do
-              find "$app" -type f -name "$name" -print -quit | grep -q .
+              if ! find "$app" -type f -name "$name" -print -quit | grep -q .; then
+                echo "missing macOS DMG resource: $name" >&2
+                exit 1
+              fi
             done
           fi
       - name: Portable bundle smoke test
