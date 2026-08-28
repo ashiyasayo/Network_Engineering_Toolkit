@@ -23,8 +23,8 @@ cargo run -p nettool-desktop
 推送版本 tag 即可觸發 `.github/workflows/release.yml`：
 
 ```sh
-git tag v0.1.2
-git push origin v0.1.2
+git tag v0.1.3
+git push origin v0.1.3
 ```
 
 GitHub Actions 會在 Ubuntu、macOS、Windows runner 平行產生 AppImage/deb、DMG、MSI 與 Windows portable ZIP，驗證套件內容後建立同名 GitHub **prerelease**，並附上三份授權文件。推送 tag 只會走 prerelease；從 GitHub Actions 以 `workflow_dispatch` 選擇 `stable` 時，workflow 會先要求並使用下列 secrets：Apple Developer ID (`APPLE_CERTIFICATE_BASE64`、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_SIGNING_IDENTITY`、`APPLE_ID`、`APPLE_TEAM_ID`、`APPLE_APP_PASSWORD`)、Windows Authenticode (`WINDOWS_CERTIFICATE_BASE64`、`WINDOWS_CERTIFICATE_PASSWORD`) 與 Linux GPG release artifact signing (`LINUX_GPG_PRIVATE_KEY_BASE64`、`LINUX_GPG_KEY_ID`、`LINUX_GPG_PASSPHRASE`)。缺少任一 secret 或平台簽章工具時，stable release 會 fail closed，不會建立未簽章的正式 release；prerelease 產物僅適合測試或內部部署。完整的 secrets 設定與安全發行順序見 [Stable Release secrets 設定](RELEASE_SECRETS.md)。
