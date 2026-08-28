@@ -558,6 +558,7 @@ mod tests {
     fn resolves_management_pci_only_from_default_route_and_known_nic() {
         let nics = vec![NicProbe {
             name: "eth0".to_owned(),
+            ip_addresses: Vec::new(),
             pci_address: Some("0000:01:00.0".to_owned()),
             bus_type: nettool_domain::NicBusType::Pci,
             driver: None,

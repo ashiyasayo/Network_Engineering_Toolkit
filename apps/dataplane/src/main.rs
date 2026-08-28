@@ -1070,8 +1070,9 @@ fn human_report(report: &ProbeReport) -> String {
 
 fn human_nic(nic: &NicProbe) -> String {
     format!(
-        "NIC: {} | Bus: {} | PCI Address: {} | Driver: {} | Link Speed: {} Mbps | RX Queues: {} | TX Queues: {} | NUMA: {}",
+        "NIC: {} | IP Addresses: {} | Bus: {} | PCI Address: {} | Driver: {} | Link Speed: {} Mbps | RX Queues: {} | TX Queues: {} | NUMA: {}",
         nic.name,
+        display_ip_addresses(&nic.ip_addresses),
         nic.bus_type.as_str(),
         optional_ref(nic.pci_address.as_deref()),
         optional_ref(nic.driver.as_deref()),
@@ -1114,8 +1115,9 @@ fn json_report(report: &ProbeReport) -> String {
 
 fn json_nic(nic: &NicProbe) -> String {
     format!(
-        "{{\"name\":{},\"bus_type\":{},\"pci_address\":{},\"driver\":{},\"link_speed_mbps\":{},\"rx_queues\":{},\"tx_queues\":{},\"numa_node\":{}}}",
+        "{{\"name\":{},\"ip_addresses\":{},\"bus_type\":{},\"pci_address\":{},\"driver\":{},\"link_speed_mbps\":{},\"rx_queues\":{},\"tx_queues\":{},\"numa_node\":{}}}",
         quote(&nic.name),
+        json_ip_addresses(&nic.ip_addresses),
         quote(nic.bus_type.as_str()),
         json_string(nic.pci_address.as_deref()),
         json_string(nic.driver.as_deref()),
@@ -1124,6 +1126,26 @@ fn json_nic(nic: &NicProbe) -> String {
         json_optional(nic.tx_queues),
         json_optional(nic.numa_node)
     )
+}
+
+fn display_ip_addresses(addresses: &[String]) -> String {
+    if addresses.is_empty() {
+        return "none".to_owned();
+    }
+    addresses
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn json_ip_addresses(addresses: &[String]) -> String {
+    let values = addresses
+        .iter()
+        .map(|address| quote(address))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{values}]")
 }
 
 fn error_json(error: &NetToolError) -> String {

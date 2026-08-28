@@ -61,6 +61,8 @@ impl Platform {
 pub struct NicProbe {
     /// 作業系統介面名稱。
     pub name: String,
+    /// 目前由作業系統指派的 IP 位址；保留 Windows IPv6 scope suffix，無法取得時為空陣列。
+    pub ip_addresses: Vec<String>,
     /// PCI BDF；非 PCI 或無法驗證時為空值。
     pub pci_address: Option<String>,
     /// 由 sysfs 路徑判定的硬體匯流排；無法安全判定時為未知。

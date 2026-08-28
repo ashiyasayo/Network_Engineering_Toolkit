@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Windows NIC probe 改用固定 PowerShell UTF-8 JSON 查詢，以 `ifIndex` 將每張介面的 IP 位址正確關聯，並把 `ip_addresses` 帶到 `interface.list/show`、`dataplane.probe`、`perf.topology` 與 `nettool-dataplane probe`；中文介面名稱不再經由 lossy code-page 解析。
 - 新增 Windows `nettool-windows-x64-portable.zip`，包含 desktop shell、Agent、GUI、dataplane、授權文件與 portable 限制說明；Release workflow 新增跨平台 bundle smoke test。
 - 無 Helper 的 privileged action 現在回傳穩定的 `HELPER.NOT_CONFIGURED`；文件明確列出 portable bundle 的功能邊界，已設定但無法連線則維持可重試的 `HELPER.TRANSPORT_FAILED`。
 - Release workflow 新增 prerelease/stable gate：stable 由 workflow dispatch 明確選擇，並以 secrets 啟用 Windows Authenticode、macOS Developer ID codesign/notarization/stapling 與 Linux GPG detached artifact signatures；簽章設定不完整時 fail closed。

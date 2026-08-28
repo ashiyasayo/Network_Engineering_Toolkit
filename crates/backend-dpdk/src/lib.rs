@@ -28,6 +28,8 @@ use nettool_error::ErrorCode;
 use nettool_error::NetToolError;
 #[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::net::IpAddr;
 use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
@@ -455,6 +457,7 @@ fn probe_platform_interfaces(warnings: &mut Vec<String>) -> Vec<NicProbe> {
         .filter(|name| !name.is_empty())
         .map(|name| NicProbe {
             name: name.to_owned(),
+            ip_addresses: Vec::new(),
             pci_address: None,
             bus_type: NicBusType::Unknown,
             driver: None,
@@ -474,7 +477,7 @@ fn probe_platform_interfaces(warnings: &mut Vec<String>) -> Vec<NicProbe> {
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "Get-NetAdapter | Select-Object -ExpandProperty Name",
+                WINDOWS_INTERFACE_PROBE_QUERY,
             ])
             .output()
         {
@@ -491,21 +494,118 @@ fn probe_platform_interfaces(warnings: &mut Vec<String>) -> Vec<NicProbe> {
                 return Vec::new();
             }
         };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(|name| NicProbe {
-            name: name.to_owned(),
-            pci_address: None,
-            bus_type: NicBusType::Unknown,
-            driver: None,
-            link_speed_mbps: None,
-            rx_queues: None,
-            tx_queues: None,
-            numa_node: None,
+    match parse_windows_interface_probe(&output.stdout) {
+        Ok(nics) => nics,
+        Err(error) => {
+            warnings.push(format!(
+                "PowerShell adapter query returned invalid data: {error}"
+            ));
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+const WINDOWS_INTERFACE_PROBE_QUERY: &str = r"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$adapters = @(Get-NetAdapter -ErrorAction Stop | ForEach-Object {
+    $adapter = $_
+    $addresses = @(Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue |
+        Where-Object { $_.AddressState -eq 'Preferred' } |
+        ForEach-Object { [string]($_.IPAddress) })
+    [pscustomobject]@{
+        name = [string]$adapter.Name
+        ip_addresses = @($addresses)
+    }
+})
+[pscustomobject]@{ adapters = @($adapters) } | ConvertTo-Json -Compress -Depth 3
+";
+
+#[cfg(target_os = "windows")]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WindowsInterfaceProbeDocument {
+    adapters: Vec<WindowsInterfaceProbe>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WindowsInterfaceProbe {
+    name: String,
+    ip_addresses: Vec<String>,
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_interface_probe(output: &[u8]) -> Result<Vec<NicProbe>, String> {
+    let document: WindowsInterfaceProbeDocument = serde_json::from_slice(output)
+        .map_err(|error| format!("Windows adapter JSON is malformed: {error}"))?;
+    document
+        .adapters
+        .into_iter()
+        .map(|adapter| {
+            let name = adapter.name.trim().to_owned();
+            if name.is_empty() {
+                return Err("Windows adapter name is empty".to_owned());
+            }
+            let ip_addresses = adapter
+                .ip_addresses
+                .into_iter()
+                .map(parse_windows_ip_address)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(NicProbe {
+                name,
+                ip_addresses,
+                pci_address: None,
+                bus_type: NicBusType::Unknown,
+                driver: None,
+                link_speed_mbps: None,
+                rx_queues: None,
+                tx_queues: None,
+                numa_node: None,
+            })
         })
         .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_ip_address(address: String) -> Result<String, String> {
+    let (address_without_scope, scope) = address
+        .split_once('%')
+        .map_or((address.as_str(), None), |(address, scope)| {
+            (address, Some(scope))
+        });
+    let parsed = address_without_scope
+        .parse::<IpAddr>()
+        .map_err(|_| format!("Windows adapter IP address is invalid: {address}"))?;
+    if let Some(scope) = scope
+        && (!parsed.is_ipv6()
+            || scope.is_empty()
+            || !scope.chars().all(|character| character.is_ascii_digit()))
+    {
+        return Err(format!("Windows adapter IP scope is invalid: {address}"));
+    }
+    Ok(address)
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_probe_tests {
+    use super::parse_windows_interface_probe;
+    #[test]
+    fn preserves_unicode_interface_names_and_associated_ip_addresses() {
+        let output =
+            r#"{"adapters":[{"name":"乙太網路 2","ip_addresses":["192.0.2.42","fe80::42%12"]}]}"#
+                .as_bytes();
+
+        let nics = parse_windows_interface_probe(output).expect("valid Windows probe fixture");
+
+        assert_eq!(nics.len(), 1);
+        assert_eq!(nics[0].name, "乙太網路 2");
+        assert_eq!(
+            nics[0].ip_addresses,
+            vec!["192.0.2.42".to_owned(), "fe80::42%12".to_owned()]
+        );
+    }
 }
 
 const fn current_platform() -> Platform {
@@ -595,6 +695,7 @@ fn probe_linux_nic(path: &Path) -> NicProbe {
         name: path
             .file_name()
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+        ip_addresses: Vec::new(),
         pci_address,
         bus_type,
         driver: fs::read_link(device.join("driver")).ok().and_then(|path| {
@@ -788,6 +889,7 @@ mod preflight_tests {
             huge_page_size_kib: Some(2048),
             nics: vec![NicProbe {
                 name: "dpdk0".to_owned(),
+                ip_addresses: Vec::new(),
                 pci_address: Some("0000:01:00.0".to_owned()),
                 bus_type: NicBusType::Pci,
                 driver: Some("vfio-pci".to_owned()),

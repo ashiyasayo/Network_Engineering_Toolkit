@@ -2176,6 +2176,8 @@ dependencies = [
  "nettool-domain",
  "nettool-dpdk-safe",
  "nettool-error",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
