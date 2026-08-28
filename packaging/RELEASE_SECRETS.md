@@ -111,14 +111,14 @@ LINUX_GPG_PASSPHRASE
 確認名稱齊全、憑證仍有效且 signing identity/key fingerprint 正確後，才建立並推送版本 tag。tag push 會先產生 prerelease；請等待該 prerelease workflow 完成後，再對同一 tag 手動執行 stable workflow。stable workflow 會以已簽章產物更新並提升同名 prerelease，不會因 Release 已存在而失敗：
 
 ```sh
-git tag -a v0.1.3 -m "release: v0.1.3"
-git push origin v0.1.3
+git tag -a v0.1.4 -m "release: v0.1.4"
+git push origin v0.1.4
 ```
 
 確認 tag push 觸發的 prerelease workflow 已完成且成功後，再執行 stable workflow：
 
 ```sh
-gh workflow run release.yml --repo "$REPO" --ref v0.1.3 --field release_mode=stable
+gh workflow run release.yml --repo "$REPO" --ref v0.1.4 --field release_mode=stable
 ```
 
 若 secrets 尚未齊全，請不要執行以上 tag／workflow 指令；stable preflight 會 fail closed，且不會建立正式未簽章 Release。現有遠端 tag 也可直接作為 `--ref`，不必重新建立 tag。
