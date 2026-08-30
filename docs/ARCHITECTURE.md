@@ -226,6 +226,8 @@ Socket Speed Engine 位於獨立 `speed` crate。TCP sender 會預先建立所�
 
 公開 `speed.run` payload 由 Speed crate 統一定義並採 deny-unknown-fields。CLI 將時間、十進位 rate、CPU ranges 與 auto selections 正規化成此 payload；Agent 再驗證 protocol/backend、duration、stream、raw frame 與 affinity invariants，並只解析 `node`/`node_trust` 中仍為 trusted、具完整 TLS connection material 且名稱不歧義的對端。socket upload 與 TCP download 會由 Agent 維持 control connection，完成雙端 endpoint Prepare、scheduled Start、authorized TCP/UDP sender/receiver 與可重試 ResultQuery；未配對、backend 未連結或尚未附著的方向 executor 都回傳不同 stable error，不以 synthetic result 取代執行。
 
+Accelerated executor 共用 contract 位於 `speed` crate；request 必須攜帶已協調的非零 session ID，executor 與 backend ID 不一致、或回傳無效量測，都會 fail closed。此 contract 只提供接入邊界，不會讓尚未具備實際 TX/RX executor 的 backend 被宣告為可用。
+
 ### Node control client
 
 Node control client 在 TCP connect、TLS handshake 與 NTCP Hello 各自套用 bounded timeout。TLS chain/server name 驗證後解析 X.509 SubjectPublicKeyInfo，並比對 pairing store 保存的完整 public-key fingerprint，再要求 Hello Node ID 等於 paired Node ID，避免受同一 CA 信任的另一身分冒用 logical Node，也允許同一金鑰的正常換證。每個 sequential request 使用 CSPRNG 128-bit request ID，response 必須匹配 major/minor、request ID 與預期 typed message；remote protocol error 保存其 stable code，heartbeat 另驗證 nonce。Client 已提供 capability、prepare、start、stop 與 ping methods。
@@ -378,6 +380,8 @@ Windows-only RIO adapter 另提供 completion queue 與 request queue 的 lifeti
 ### Native backend implementation
 
 Rust/DPDK 邊界分成 `dpdk-sys` 與 `dpdk-safe`。前者以 feature-gated C shim 包住包含 inline API 的 EAL、ethdev、mempool、RX burst 與 mbuf free，所有 `extern "C"` declarations 集中於此；後者以 process-global EAL ownership、RAII mempool/port、不可跨執行緒移動的 queue handle 與 callback-scoped borrowed packet view 約束生命週期。Burst guard 在正常、錯誤及 panic unwind 路徑都釋放未消耗 mbufs。`ffi-api` 只供無 SDK 的編譯檢查，不代表 backend 可執行；只有 `native-dpdk` 會透過 `pkg-config libdpdk` 編譯 shim 並使 implementation availability 成立。
+
+`nettool-backend-dpdk` 的 native TX executor 是 dataplane 對 DPDK lifecycle 的唯一入口：它只接受 canonical PCI BDF、已驗證的 `QueuePlan` 與呼叫端建立的 frame template，並回傳 PMD 接受封包數及 hardware/xstats evidence。CLI 介面名稱若被支援，只能在前端解析為 PCI BDF，不得越過 executor 邊界。
 
 #### DPDK ownership 與 evidence
 

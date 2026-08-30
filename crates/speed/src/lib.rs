@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod accelerated;
 mod auth;
 mod config;
 mod pacing;
@@ -11,6 +12,10 @@ mod socket_udp;
 mod tcp;
 mod udp;
 
+pub use accelerated::{
+    AcceleratedBackend, AcceleratedExecutionRequest, AcceleratedExecutionResult,
+    AcceleratedSpeedExecutor, execute_with,
+};
 pub use auth::{
     MAX_AUTHORIZATION_TAG_BYTES, MIN_AUTHORIZATION_TAG_BYTES, authorization_tag_matches,
     validate_authorization_tag,

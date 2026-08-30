@@ -49,7 +49,9 @@ pub(super) fn validate_request(
     payload: &[u8],
     storage: &Storage,
 ) -> Result<serde_json::Value, NetToolError> {
-    let request = parse_speed_payload(payload)?;
+    let mut request = parse_speed_payload(payload)?;
+    request.validate()?;
+    resolve_accelerated_pci(&mut request)?;
     request.validate()?;
     validate_socket_speed_options(&request)?;
     let node = storage
@@ -161,7 +163,9 @@ pub(super) async fn execute_speed(
     payload: &[u8],
     runtime: &AgentRuntime,
 ) -> Result<serde_json::Value, NetToolError> {
-    let request = parse_speed_payload(payload)?;
+    let mut request = parse_speed_payload(payload)?;
+    request.validate()?;
+    resolve_accelerated_pci(&mut request)?;
     request.validate()?;
     validate_socket_speed_options(&request)?;
     let node = runtime

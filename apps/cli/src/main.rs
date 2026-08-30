@@ -756,6 +756,8 @@ fn parse_speed_run(arguments: &[String]) -> Result<Value, Value> {
     let mut latency_under_load = false;
     let mut cpus: Option<Vec<u32>> = None;
     let mut numa_node: Option<u32> = None;
+    let mut accelerated_pci_address: Option<String> = None;
+    let mut accelerated_interface_name: Option<String> = None;
     let mut seen = BTreeSet::new();
     let mut index = 1;
     while index < arguments.len() {
@@ -802,6 +804,8 @@ fn parse_speed_run(arguments: &[String]) -> Result<Value, Value> {
             "--cpus" => cpus = Some(parse_cpu_set(value)?),
             "--numa" if value == "auto" => numa_node = None,
             "--numa" => numa_node = Some(parse_nonzero_or_zero::<u32>(value, "NUMA node")?),
+            "--pci" => accelerated_pci_address = Some(value.clone()),
+            "--interface" => accelerated_interface_name = Some(value.clone()),
             _ => {
                 return Err(cli_error(&format!(
                     "unknown or invalid speed option: {flag}"
@@ -825,6 +829,8 @@ fn parse_speed_run(arguments: &[String]) -> Result<Value, Value> {
         "latency_under_load": latency_under_load,
         "cpus": cpus,
         "numa_node": numa_node,
+        "accelerated_pci_address": accelerated_pci_address,
+        "accelerated_interface_name": accelerated_interface_name,
     }))
 }
 

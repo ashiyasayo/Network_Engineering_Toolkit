@@ -219,6 +219,9 @@ pub struct PrepareTest {
     /// Initiator 已配置的 receiver port；download/bidirectional 必須在 Prepare 前 bind。
     #[prost(uint32, tag = "15")]
     pub receive_data_port: u32,
+    /// Accelerated data-plane 的 canonical PCI BDF；socket backend 保持空值。
+    #[prost(string, tag = "16")]
+    pub accelerated_pci_address: String,
 }
 
 /// Prepared data-plane endpoint。

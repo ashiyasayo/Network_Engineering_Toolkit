@@ -273,6 +273,8 @@ mod tests {
             latency_under_load: false,
             cpus: None,
             numa_node: None,
+            accelerated_pci_address: None,
+            accelerated_interface_name: None,
         }
     }
 

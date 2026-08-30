@@ -59,8 +59,9 @@ mod agent_runtime {
     use nettool_node_protocol::StopTest;
     use nettool_packet::{AnalysisCoverage, PacketWorker, PacketWorkerConfiguration, StopToken};
     use nettool_speed::{
-        AuthorizedTcpSenderConfig, SpeedRunRequest, TcpRunConfig, UdpSenderConfig,
-        run_authorized_tcp_receiver, run_authorized_tcp_sender, run_udp_receiver, run_udp_sender,
+        AcceleratedBackend, AuthorizedTcpSenderConfig, SpeedRunRequest, TcpRunConfig,
+        UdpSenderConfig, run_authorized_tcp_receiver, run_authorized_tcp_sender, run_udp_receiver,
+        run_udp_sender,
     };
     use nettool_storage::{
         SpeedSessionPersistenceRequest, Storage, TrustedNodeConnection, TrustedNodeSummary,
@@ -874,8 +875,8 @@ mod agent_runtime {
     }
 
     fn validate_accelerated_backend(request: &SpeedRunRequest) -> Result<(), NetToolError> {
-        match request.backend.as_str() {
-            "dpdk" => {
+        match AcceleratedBackend::from_id(&request.backend) {
+            Some(AcceleratedBackend::Dpdk) => {
                 if !nettool_backend_dpdk::is_backend_built() {
                     return Err(NetToolError::new(
                         ErrorCode::BackendNotBuilt,
@@ -889,7 +890,7 @@ mod agent_runtime {
                     false,
                 ))
             }
-            "af_xdp" => {
+            Some(AcceleratedBackend::AfXdp) => {
                 let report = probe_environment()?;
                 if !nettool_backend_af_xdp::is_backend_built()
                     || report.platform != nettool_domain::Platform::Linux
@@ -908,7 +909,7 @@ mod agent_runtime {
                     false,
                 ))
             }
-            "rio" => {
+            Some(AcceleratedBackend::Rio) => {
                 if !cfg!(target_os = "windows") || !nettool_backend_rio::is_backend_built() {
                     return Err(NetToolError::new(
                         ErrorCode::BackendNotBuilt,
@@ -922,8 +923,43 @@ mod agent_runtime {
                     false,
                 ))
             }
-            _ => Ok(()),
+            None => Ok(()),
         }
+    }
+
+    fn resolve_accelerated_pci(request: &mut SpeedRunRequest) -> Result<(), NetToolError> {
+        if AcceleratedBackend::from_id(&request.backend).is_none()
+            || request.accelerated_pci_address.is_some()
+        {
+            return Ok(());
+        }
+        let interface = request
+            .accelerated_interface_name
+            .as_deref()
+            .ok_or_else(|| {
+                NetToolError::new(
+                    ErrorCode::InvalidArgument,
+                    "accelerated NIC selector is missing",
+                    false,
+                )
+            })?;
+        let report = probe_environment()?;
+        let matches: Vec<_> = report
+            .nics
+            .iter()
+            .filter(|nic| nic.name == interface)
+            .filter_map(|nic| nic.pci_address.as_deref())
+            .collect();
+        if matches.len() != 1 {
+            return Err(NetToolError::new(
+                ErrorCode::InvalidArgument,
+                "accelerated interface must resolve to exactly one PCI BDF",
+                false,
+            ));
+        }
+        request.accelerated_pci_address = Some(matches[0].to_owned());
+        request.accelerated_interface_name = None;
+        Ok(())
     }
 
     fn failure(code: &str, message: &str, retryable: bool) -> ActionResponse {
@@ -1136,7 +1172,7 @@ mod agent_runtime {
                 "CLI.INVALID_ARGUMENT"
             );
             let valid = validate_speed_request(
-                br#"{"node":"node-b","protocol":"raw","backend":"dpdk","direction":"upload","duration_ms":10000,"warmup_ms":1000,"cooldown_ms":1000,"streams":null,"frame_size":64,"target_rate_bps":100000000000,"auto_tune":false,"latency_under_load":false,"cpus":null,"numa_node":null}"#,
+                br#"{"node":"node-b","protocol":"raw","backend":"dpdk","direction":"upload","duration_ms":10000,"warmup_ms":1000,"cooldown_ms":1000,"streams":null,"frame_size":64,"target_rate_bps":100000000000,"auto_tune":false,"latency_under_load":false,"cpus":null,"numa_node":null,"accelerated_pci_address":"0000:01:00.0","accelerated_interface_name":null}"#,
                 &storage,
             );
             assert_eq!(

@@ -225,6 +225,11 @@ impl NodeControlService {
                 false,
             ));
         }
+        if matches!(prepare.backend.as_str(), "dpdk" | "af_xdp" | "rio")
+            && !valid_pci_bdf(&prepare.accelerated_pci_address)
+        {
+            return Err(invalid("accelerated prepare requires a valid PCI BDF"));
+        }
         let now_unix_seconds = now_unix_nanoseconds / 1_000_000_000;
         let ttl = authorization_ttl(&prepare)?;
         let response = match prepare.test_type.as_str() {
@@ -453,6 +458,18 @@ impl NodeControlService {
             now_unix_seconds,
         )
     }
+}
+
+fn valid_pci_bdf(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 12
+        && bytes[4] == b':'
+        && bytes[7] == b':'
+        && bytes[10] == b'.'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7 | 10) || byte.is_ascii_hexdigit())
 }
 
 async fn with_coordinator<T, F>(
@@ -694,6 +711,7 @@ mod tests {
                     mtu: 0,
                     source_data_port: 0,
                     receive_data_port: 50_000,
+                    accelerated_pci_address: String::new(),
                 })),
                 1_000_000_000,
             )
@@ -730,6 +748,7 @@ mod tests {
                     mtu: 0,
                     source_data_port: 0,
                     receive_data_port: 50_001,
+                    accelerated_pci_address: String::new(),
                 })),
                 1_000_000_000,
             )
@@ -766,6 +785,7 @@ mod tests {
                     mtu: 1_500,
                     source_data_port: 50_000,
                     receive_data_port: 0,
+                    accelerated_pci_address: String::new(),
                 })),
                 1_000_000_000,
             )

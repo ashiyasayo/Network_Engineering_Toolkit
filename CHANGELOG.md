@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 新增 `nettool-speed` accelerated executor 共用 contract，強制 backend/session/result 一致性；Agent 維持未附著 backend 的 fail-closed 行為，不會產生 synthetic throughput。
 - Windows NIC probe 改用固定 PowerShell UTF-8 JSON 查詢，以 `ifIndex` 將每張介面的 IP 位址正確關聯，並把 `ip_addresses` 帶到 `interface.list/show`、`dataplane.probe`、`perf.topology` 與 `nettool-dataplane probe`；中文介面名稱不再經由 lossy code-page 解析。
 - Windows MSI smoke test 改用原生 administrative extraction 驗證實際安裝檔名，避免 7-Zip 顯示 MSI 內部雜湊檔名而誤判套件缺少資源。
 - 新增 Windows `nettool-windows-x64-portable.zip`，包含 desktop shell、Agent、GUI、dataplane、授權文件與 portable 限制說明；Release workflow 新增跨平台 bundle smoke test。
@@ -39,6 +40,7 @@
 - Agent 已實際處理 wire `dry_run`：非 helper action 回傳不執行副作用的 plan，privileged action 將旗標傳給 helper dry-run path，並補上 payload hash regression test。
 - CLI 新增全域 `--dry-run` 旗標，可將安全 plan 送入 Agent，而不執行 action side effect；重複旗標會 fail closed。
 - 修正 `speed.run` accelerated backend 邊界：DPDK、AF_XDP 與 RIO 在 executor 尚未接入時不會回退到 socket worker；會在建立遠端 session 前回傳明確 unsupported/backend-not-built 錯誤。
+- Native DPDK TX dataplane 現在透過 `nettool-backend-dpdk` 的 feature-gated executor 執行 EAL、mempool、port、queue 與 hardware counter lifecycle；executor 僅接受 canonical PCI BDF，未連結 native SDK 時維持 fail-closed。
 - `speed history` CLI option parser 現在允許 `--limit` 與 `--format csv` 任意順序，並對缺值、未知格式與重複旗標 fail closed。
 - Agent dry-run 現在會先做無副作用的 JSON/schema validation；malformed `speed.run`、benchmark profile、session 與 profile payload 不會被錯誤回報為可執行 plan。
 - dry-run plan 的 `permission` 欄位改為穩定 snake_case（`read_only`、`user`、`privileged`），不再暴露 Rust Debug 名稱。

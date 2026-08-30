@@ -34,6 +34,10 @@ pub struct SpeedRunRequest {
     pub cpus: Option<Vec<u32>>,
     /// 明確指定的 NUMA node；`None` 代表 auto。
     pub numa_node: Option<u32>,
+    /// Accelerated backend 的 canonical PCI BDF。
+    pub accelerated_pci_address: Option<String>,
+    /// 僅供 Agent 解析成 PCI BDF 的介面名稱，不得傳入 executor。
+    pub accelerated_interface_name: Option<String>,
 }
 
 impl SpeedRunRequest {
@@ -75,6 +79,34 @@ impl SpeedRunRequest {
         if self.numa_node.is_some() && matches!(self.backend.as_str(), "socket" | "native") {
             return Err(invalid("NUMA selection requires an accelerated backend"));
         }
+        let accelerated = matches!(self.backend.as_str(), "dpdk" | "af_xdp" | "rio");
+        if accelerated {
+            if self.accelerated_pci_address.is_some() == self.accelerated_interface_name.is_some() {
+                return Err(invalid(
+                    "accelerated backend requires exactly one PCI BDF or interface name",
+                ));
+            }
+            if let Some(pci) = &self.accelerated_pci_address {
+                if !valid_pci_bdf(pci) {
+                    return Err(invalid("accelerated PCI BDF is invalid"));
+                }
+            }
+            if self
+                .accelerated_interface_name
+                .as_deref()
+                .is_some_and(|name| {
+                    name.is_empty() || name.len() > 256 || name.chars().any(char::is_control)
+                })
+            {
+                return Err(invalid("accelerated interface name is invalid"));
+            }
+        } else if self.accelerated_pci_address.is_some()
+            || self.accelerated_interface_name.is_some()
+        {
+            return Err(invalid(
+                "socket and native backends do not accept accelerated NIC selectors",
+            ));
+        }
         match self.protocol {
             SpeedProtocol::Tcp => {
                 if self.frame_size.is_some() || self.target_rate_bps.is_some() {
@@ -108,6 +140,18 @@ impl SpeedRunRequest {
     }
 }
 
+fn valid_pci_bdf(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 12
+        && bytes[4] == b':'
+        && bytes[7] == b':'
+        && bytes[10] == b'.'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7 | 10) || byte.is_ascii_hexdigit())
+}
+
 fn invalid(message: &'static str) -> NetToolError {
     NetToolError::new(ErrorCode::InvalidArgument, message, false)
 }
@@ -133,6 +177,8 @@ mod tests {
             latency_under_load: false,
             cpus: None,
             numa_node: None,
+            accelerated_pci_address: None,
+            accelerated_interface_name: None,
         }
     }
 
@@ -149,6 +195,7 @@ mod tests {
         let mut raw = request(SpeedProtocol::Raw);
         assert!(raw.validate().is_err());
         raw.backend = "dpdk".to_owned();
+        raw.accelerated_pci_address = Some("0000:01:00.0".to_owned());
         raw.frame_size = Some(64);
         raw.target_rate_bps = Some(100_000_000_000);
         raw.validate().expect("raw");
