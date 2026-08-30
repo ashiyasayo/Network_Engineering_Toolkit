@@ -12,8 +12,8 @@ pub use environment::{
     resolve_management_pci_from_route,
 };
 pub use executor::{
-    NativeDpdkExecutionRequest, NativeDpdkExecutionResult, execute_native_tx,
-    native_executor_unavailable,
+    NativeDpdkExecutionRequest, NativeDpdkExecutionResult, NativeDpdkReceiveRequest,
+    NativeDpdkReceiveResult, execute_native_rx, execute_native_tx, native_executor_unavailable,
 };
 pub use planning::{
     DataPlaneCpu, MbufPoolSizing, NicQueueCapacity, QueuePlan, QueueSelection, RxQueueAssignment,

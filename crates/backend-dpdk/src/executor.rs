@@ -1,6 +1,9 @@
 //! Native DPDK executor 的 feature-gated 入口。
 
 use nettool_error::{ErrorCode, NetToolError};
+use std::time::Duration;
+#[cfg(feature = "ffi-api")]
+use std::time::Instant;
 
 use crate::QueuePlan;
 #[cfg(feature = "ffi-api")]
@@ -32,6 +35,28 @@ pub struct NativeDpdkExecutionResult {
     pub xstats: Vec<nettool_dpdk_safe::XStat>,
 }
 
+/// Native DPDK RX executor 的已驗證輸入。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeDpdkReceiveRequest {
+    /// Canonical NIC PCI BDF。
+    pub pci_address: String,
+    /// 接收 window；到期後回傳已觀測的計數器。
+    pub duration: Duration,
+    /// 已由 resource manager 規劃並保留的 queue ownership。
+    pub queue_plan: QueuePlan,
+}
+
+/// Native DPDK RX executor 的實測結果。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeDpdkReceiveResult {
+    /// PMD 交給 RX queue 的封包數。
+    pub received_packets: u64,
+    /// Native port hardware counters。
+    pub hardware: nettool_dpdk_safe::PortStats,
+    /// PMD-specific extended counters。
+    pub xstats: Vec<nettool_dpdk_safe::XStat>,
+}
+
 impl NativeDpdkExecutionRequest {
     /// 驗證 executor 不會接收未解析的 NIC 名稱或空工作量。
     ///
@@ -52,6 +77,24 @@ impl NativeDpdkExecutionRequest {
         }
         self.queue_plan.validate()?;
         Ok(())
+    }
+}
+
+impl NativeDpdkReceiveRequest {
+    /// 驗證 RX executor 的 PCI identity、時間界限與 queue ownership。
+    ///
+    /// # Errors
+    ///
+    /// PCI BDF、接收時間或 queue plan 無效時回傳錯誤。
+    pub fn validate(&self) -> Result<(), NetToolError> {
+        if !valid_pci_bdf(&self.pci_address) || self.duration.is_zero() {
+            return Err(NetToolError::new(
+                ErrorCode::InvalidArgument,
+                "native DPDK receive request is invalid",
+                false,
+            ));
+        }
+        self.queue_plan.validate()
     }
 }
 
@@ -159,6 +202,71 @@ pub fn execute_native_tx(
     })
 }
 
+/// 執行有時間界限的 native DPDK RX polling。
+///
+/// # Errors
+///
+/// 未啟用 `ffi-api`、EAL/port/queue 初始化失敗或 hardware counter 讀取失敗時回傳錯誤。
+#[cfg(feature = "ffi-api")]
+pub fn execute_native_rx(
+    request: &NativeDpdkReceiveRequest,
+) -> Result<NativeDpdkReceiveResult, NetToolError> {
+    use nettool_dpdk_safe::{Environment, MempoolConfiguration, PortConfiguration};
+
+    request.validate()?;
+    let environment = Environment::initialize(&[
+        "nettool-backend-dpdk-rx".to_owned(),
+        "--no-telemetry".to_owned(),
+        "-a".to_owned(),
+        request.pci_address.clone(),
+    ])?;
+    let port_id = environment.port_by_name(&request.pci_address)?;
+    let mbufs = required_mbufs(MbufPoolSizing {
+        rx_queues: u32::from(request.queue_plan.rx_queues),
+        rx_descriptors_per_queue: 1024,
+        tx_queues: u32::from(request.queue_plan.tx_queues),
+        tx_descriptors_per_queue: 1024,
+        burst_size: 64,
+        pipeline_depth: 1,
+        capture_buffers: 0,
+        safety_margin: 1024,
+    })?;
+    let pool = environment.create_mempool(&MempoolConfiguration {
+        name: format!("nettool_speed_rx_{port_id}"),
+        count: u32::try_from(mbufs)
+            .map_err(|_| invalid("DPDK mbuf pool size exceeds u32 capacity"))?,
+        cache_size: 256,
+        data_room_size: 9_600,
+        socket_id: request.queue_plan.numa_node,
+    })?;
+    let mut port = pool.configure_port(PortConfiguration {
+        port_id,
+        rx_queues: request.queue_plan.rx_queues,
+        tx_queues: request.queue_plan.tx_queues,
+        rx_descriptors: 1024,
+        tx_descriptors: 1024,
+        socket_id: u32::try_from(request.queue_plan.numa_node)
+            .map_err(|_| invalid("DPDK NUMA socket ID must be non-negative"))?,
+    })?;
+    port.start()?;
+    let mut queue = port.rx_queue(0, 64)?;
+    let started = Instant::now();
+    let mut received_packets = 0_u64;
+    while started.elapsed() < request.duration {
+        let received = queue.receive_burst(|_| {})?;
+        received_packets =
+            received_packets.saturating_add(u64::try_from(received).unwrap_or(u64::MAX));
+    }
+    drop(queue);
+    let hardware = port.stats()?;
+    let xstats = port.xstats()?;
+    Ok(NativeDpdkReceiveResult {
+        received_packets,
+        hardware,
+        xstats,
+    })
+}
+
 /// 未連結 native DPDK 時維持 fail-closed executor 行為。
 ///
 /// # Errors
@@ -171,6 +279,18 @@ pub fn execute_native_tx(
     Err(native_executor_unavailable())
 }
 
+/// 未連結 native DPDK 時維持 fail-closed RX executor 行為。
+///
+/// # Errors
+///
+/// 一律回傳 backend-not-built 錯誤。
+#[cfg(not(feature = "ffi-api"))]
+pub fn execute_native_rx(
+    _request: &NativeDpdkReceiveRequest,
+) -> Result<NativeDpdkReceiveResult, NetToolError> {
+    Err(native_executor_unavailable())
+}
+
 #[cfg(feature = "ffi-api")]
 fn invalid(message: &'static str) -> NetToolError {
     NetToolError::new(ErrorCode::InvalidArgument, message, false)
@@ -178,7 +298,8 @@ fn invalid(message: &'static str) -> NetToolError {
 
 #[cfg(test)]
 mod tests {
-    use super::NativeDpdkExecutionRequest;
+    use super::{NativeDpdkExecutionRequest, NativeDpdkReceiveRequest};
+    use std::time::Duration;
 
     #[test]
     fn rejects_invalid_native_executor_request() {
@@ -189,6 +310,15 @@ mod tests {
                 packets: 1,
                 queue_plan: plan(),
                 frame_template: vec![0; 64],
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            NativeDpdkReceiveRequest {
+                pci_address: "0000:01:00.0".to_owned(),
+                duration: Duration::ZERO,
+                queue_plan: plan(),
             }
             .validate()
             .is_err()

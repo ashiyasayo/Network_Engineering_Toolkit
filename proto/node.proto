@@ -32,7 +32,7 @@ message PairResponse { bool trusted = 1; string fingerprint = 2; }
 message CapabilityRequest {}
 message CapabilityResponse { repeated Capability capabilities = 1; }
 message Capability { uint32 id = 1; uint32 min_version = 2; uint32 max_version = 3; bool available = 4; }
-message PrepareTest { bytes session_id = 1; string operation_id = 2; string test_type = 3; string backend = 4; string direction = 5; uint64 duration_ms = 6; uint64 warmup_ms = 7; uint64 cooldown_ms = 8; uint32 streams = 9; uint32 frame_size = 10; uint32 payload_size = 11; uint64 target_rate_bps = 12; uint32 mtu = 13; uint32 source_data_port = 14; uint32 receive_data_port = 15; string accelerated_pci_address = 16; }
+message PrepareTest { bytes session_id = 1; string operation_id = 2; string test_type = 3; string backend = 4; string direction = 5; uint64 duration_ms = 6; uint64 warmup_ms = 7; uint64 cooldown_ms = 8; uint32 streams = 9; uint32 frame_size = 10; uint32 payload_size = 11; uint64 target_rate_bps = 12; uint32 mtu = 13; uint32 source_data_port = 14; uint32 receive_data_port = 15; string accelerated_pci_address = 16; string remote_accelerated_pci_address = 17; string remote_mac_address = 18; }
 message PrepareTestResponse { bool ready = 1; uint32 data_port = 2; string authorization_tag = 3; uint32 source_data_port = 4; }
 message StartTest { bytes session_id = 1; string operation_id = 2; }
 message StopTest { bytes session_id = 1; string operation_id = 2; }

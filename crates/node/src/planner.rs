@@ -107,6 +107,11 @@ pub fn plan_speed_session(
             source_data_port: u32::from(local_ports.send),
             receive_data_port: u32::from(local_ports.receive),
             accelerated_pci_address: request.accelerated_pci_address.clone().unwrap_or_default(),
+            remote_accelerated_pci_address: request
+                .remote_accelerated_pci_address
+                .clone()
+                .unwrap_or_default(),
+            remote_mac_address: request.remote_mac_address.clone().unwrap_or_default(),
         },
     })
 }
@@ -253,6 +258,8 @@ mod tests {
             numa_node: None,
             accelerated_pci_address: Some("0000:01:00.0".to_owned()),
             accelerated_interface_name: None,
+            remote_accelerated_pci_address: Some("0000:02:00.0".to_owned()),
+            remote_mac_address: Some("02:00:00:00:00:02".to_owned()),
         }
     }
 
@@ -279,6 +286,8 @@ mod tests {
         assert_eq!(plan.prepare.streams, 0);
         assert_eq!(plan.prepare.source_data_port, 0);
         assert_eq!(plan.prepare.accelerated_pci_address, "0000:01:00.0");
+        assert_eq!(plan.prepare.remote_accelerated_pci_address, "0000:02:00.0");
+        assert_eq!(plan.prepare.remote_mac_address, "02:00:00:00:00:02");
         assert_eq!(plan.required_capabilities.len(), 6);
     }
 

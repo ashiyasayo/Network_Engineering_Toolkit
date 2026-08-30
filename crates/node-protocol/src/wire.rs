@@ -222,6 +222,12 @@ pub struct PrepareTest {
     /// Accelerated data-plane 的 canonical PCI BDF；socket backend 保持空值。
     #[prost(string, tag = "16")]
     pub accelerated_pci_address: String,
+    /// Remote Node 上 accelerated data-plane 的 canonical PCI BDF。
+    #[prost(string, tag = "17")]
+    pub remote_accelerated_pci_address: String,
+    /// Raw DPDK peer 的 unicast MAC address。
+    #[prost(string, tag = "18")]
+    pub remote_mac_address: String,
 }
 
 /// Prepared data-plane endpoint。

@@ -758,6 +758,8 @@ fn parse_speed_run(arguments: &[String]) -> Result<Value, Value> {
     let mut numa_node: Option<u32> = None;
     let mut accelerated_pci_address: Option<String> = None;
     let mut accelerated_interface_name: Option<String> = None;
+    let mut remote_accelerated_pci_address: Option<String> = None;
+    let mut remote_mac_address: Option<String> = None;
     let mut seen = BTreeSet::new();
     let mut index = 1;
     while index < arguments.len() {
@@ -806,6 +808,8 @@ fn parse_speed_run(arguments: &[String]) -> Result<Value, Value> {
             "--numa" => numa_node = Some(parse_nonzero_or_zero::<u32>(value, "NUMA node")?),
             "--pci" => accelerated_pci_address = Some(value.clone()),
             "--interface" => accelerated_interface_name = Some(value.clone()),
+            "--remote-pci" => remote_accelerated_pci_address = Some(value.clone()),
+            "--remote-mac" => remote_mac_address = Some(value.clone()),
             _ => {
                 return Err(cli_error(&format!(
                     "unknown or invalid speed option: {flag}"
@@ -831,6 +835,8 @@ fn parse_speed_run(arguments: &[String]) -> Result<Value, Value> {
         "numa_node": numa_node,
         "accelerated_pci_address": accelerated_pci_address,
         "accelerated_interface_name": accelerated_interface_name,
+        "remote_accelerated_pci_address": remote_accelerated_pci_address,
+        "remote_mac_address": remote_mac_address,
     }))
 }
 

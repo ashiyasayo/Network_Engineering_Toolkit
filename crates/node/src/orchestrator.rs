@@ -275,6 +275,8 @@ mod tests {
             numa_node: None,
             accelerated_pci_address: None,
             accelerated_interface_name: None,
+            remote_accelerated_pci_address: None,
+            remote_mac_address: None,
         }
     }
 

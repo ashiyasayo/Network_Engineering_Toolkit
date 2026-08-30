@@ -230,6 +230,17 @@ impl NodeControlService {
         {
             return Err(invalid("accelerated prepare requires a valid PCI BDF"));
         }
+        if prepare.backend == "dpdk" && !valid_pci_bdf(&prepare.remote_accelerated_pci_address) {
+            return Err(invalid("DPDK prepare requires a valid remote PCI BDF"));
+        }
+        if prepare.backend == "dpdk"
+            && prepare.test_type == "raw"
+            && !valid_unicast_mac(&prepare.remote_mac_address)
+        {
+            return Err(invalid(
+                "DPDK raw prepare requires a valid remote unicast MAC",
+            ));
+        }
         let now_unix_seconds = now_unix_nanoseconds / 1_000_000_000;
         let ttl = authorization_ttl(&prepare)?;
         let response = match prepare.test_type.as_str() {
@@ -472,6 +483,15 @@ fn valid_pci_bdf(value: &str) -> bool {
             .all(|(index, byte)| matches!(index, 4 | 7 | 10) || byte.is_ascii_hexdigit())
 }
 
+fn valid_unicast_mac(value: &str) -> bool {
+    let parts: Vec<_> = value.split(':').collect();
+    parts.len() == 6
+        && parts
+            .iter()
+            .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && u8::from_str_radix(parts[0], 16).is_ok_and(|first| first != 0 && first & 1 == 0)
+}
+
 async fn with_coordinator<T, F>(
     coordinator: &Arc<Mutex<SessionCoordinator>>,
     operation: F,
@@ -712,6 +732,8 @@ mod tests {
                     source_data_port: 0,
                     receive_data_port: 50_000,
                     accelerated_pci_address: String::new(),
+                    remote_accelerated_pci_address: String::new(),
+                    remote_mac_address: String::new(),
                 })),
                 1_000_000_000,
             )
@@ -749,6 +771,8 @@ mod tests {
                     source_data_port: 0,
                     receive_data_port: 50_001,
                     accelerated_pci_address: String::new(),
+                    remote_accelerated_pci_address: String::new(),
+                    remote_mac_address: String::new(),
                 })),
                 1_000_000_000,
             )
@@ -786,6 +810,8 @@ mod tests {
                     source_data_port: 50_000,
                     receive_data_port: 0,
                     accelerated_pci_address: String::new(),
+                    remote_accelerated_pci_address: String::new(),
+                    remote_mac_address: String::new(),
                 })),
                 1_000_000_000,
             )

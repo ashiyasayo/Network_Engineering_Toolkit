@@ -38,6 +38,12 @@ pub struct SpeedRunRequest {
     pub accelerated_pci_address: Option<String>,
     /// 僅供 Agent 解析成 PCI BDF 的介面名稱，不得傳入 executor。
     pub accelerated_interface_name: Option<String>,
+    /// Remote accelerated backend 的 canonical PCI BDF；僅由 Node control plane 消費。
+    #[serde(default)]
+    pub remote_accelerated_pci_address: Option<String>,
+    /// DPDK raw Ethernet 對端 NIC 的 unicast MAC address。
+    #[serde(default)]
+    pub remote_mac_address: Option<String>,
 }
 
 impl SpeedRunRequest {
@@ -100,8 +106,32 @@ impl SpeedRunRequest {
             {
                 return Err(invalid("accelerated interface name is invalid"));
             }
+            if self.backend == "dpdk"
+                && !self
+                    .remote_accelerated_pci_address
+                    .as_deref()
+                    .is_some_and(valid_pci_bdf)
+            {
+                return Err(invalid("DPDK backend requires a valid remote PCI BDF"));
+            }
+            if self.backend == "dpdk"
+                && self.protocol == SpeedProtocol::Raw
+                && !self
+                    .remote_mac_address
+                    .as_deref()
+                    .is_some_and(valid_unicast_mac)
+            {
+                return Err(invalid(
+                    "DPDK raw Ethernet requires a valid remote unicast MAC",
+                ));
+            }
+            if self.backend != "dpdk" && self.remote_accelerated_pci_address.is_some() {
+                return Err(invalid("only the DPDK backend accepts a remote PCI BDF"));
+            }
         } else if self.accelerated_pci_address.is_some()
             || self.accelerated_interface_name.is_some()
+            || self.remote_accelerated_pci_address.is_some()
+            || self.remote_mac_address.is_some()
         {
             return Err(invalid(
                 "socket and native backends do not accept accelerated NIC selectors",
@@ -152,6 +182,15 @@ fn valid_pci_bdf(value: &str) -> bool {
             .all(|(index, byte)| matches!(index, 4 | 7 | 10) || byte.is_ascii_hexdigit())
 }
 
+fn valid_unicast_mac(value: &str) -> bool {
+    let bytes: Vec<_> = value.split(':').collect();
+    bytes.len() == 6
+        && bytes
+            .iter()
+            .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && u8::from_str_radix(bytes[0], 16).is_ok_and(|first| first != 0 && first & 1 == 0)
+}
+
 fn invalid(message: &'static str) -> NetToolError {
     NetToolError::new(ErrorCode::InvalidArgument, message, false)
 }
@@ -179,6 +218,8 @@ mod tests {
             numa_node: None,
             accelerated_pci_address: None,
             accelerated_interface_name: None,
+            remote_accelerated_pci_address: None,
+            remote_mac_address: None,
         }
     }
 
@@ -196,6 +237,8 @@ mod tests {
         assert!(raw.validate().is_err());
         raw.backend = "dpdk".to_owned();
         raw.accelerated_pci_address = Some("0000:01:00.0".to_owned());
+        raw.remote_accelerated_pci_address = Some("0000:02:00.0".to_owned());
+        raw.remote_mac_address = Some("02:00:00:00:00:02".to_owned());
         raw.frame_size = Some(64);
         raw.target_rate_bps = Some(100_000_000_000);
         raw.validate().expect("raw");

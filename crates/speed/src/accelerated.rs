@@ -176,6 +176,8 @@ mod tests {
             numa_node: None,
             accelerated_pci_address: Some("0000:01:00.0".to_owned()),
             accelerated_interface_name: None,
+            remote_accelerated_pci_address: Some("0000:02:00.0".to_owned()),
+            remote_mac_address: Some("02:00:00:00:00:02".to_owned()),
         }
     }
 
