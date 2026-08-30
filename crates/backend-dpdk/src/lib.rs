@@ -3,12 +3,17 @@
 #![forbid(unsafe_code)]
 
 mod environment;
+mod executor;
 mod planning;
 
 pub use environment::{
     EnvironmentCollection, LinuxBenchmarkSnapshotRequest, RssEvidence,
     collect_benchmark_environment, detect_management_pci_address, parse_rss_evidence,
     resolve_management_pci_from_route,
+};
+pub use executor::{
+    NativeDpdkExecutionRequest, NativeDpdkExecutionResult, execute_native_tx,
+    native_executor_unavailable,
 };
 pub use planning::{
     DataPlaneCpu, MbufPoolSizing, NicQueueCapacity, QueuePlan, QueueSelection, RxQueueAssignment,

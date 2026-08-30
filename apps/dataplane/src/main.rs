@@ -873,8 +873,6 @@ fn run_native_dpdk_tx(
     frame_size: u16,
     packets: u64,
 ) -> Result<String, NetToolError> {
-    use nettool_dpdk_safe::{Environment, MempoolConfiguration, PortConfiguration};
-
     let queue_plan = native_queue_plan(interface)?;
     #[cfg(target_os = "linux")]
     pin_native_worker(queue_plan.rx_assignments[0].logical_cpu)?;
@@ -903,70 +901,23 @@ fn run_native_dpdk_tx(
         packet_rate: packets,
     };
     let template = profile.template_bytes()?;
-    let environment = Environment::initialize(&[
-        "nettool-dataplane".to_owned(),
-        "--no-telemetry".to_owned(),
-        "-a".to_owned(),
-        interface.to_owned(),
-    ])?;
-    let port_id = environment.port_by_name(interface)?;
-    let mbuf_count = required_mbufs(MbufPoolSizing {
-        rx_queues: u32::from(queue_plan.rx_queues),
-        rx_descriptors_per_queue: 1024,
-        tx_queues: u32::from(queue_plan.tx_queues),
-        tx_descriptors_per_queue: 1024,
-        burst_size: 64,
-        pipeline_depth: 1,
-        capture_buffers: 0,
-        safety_margin: 1024,
-    })?;
-    let pool = environment.create_mempool(&MempoolConfiguration {
-        name: format!("nettool_tx_{port_id}"),
-        count: u32::try_from(mbuf_count).map_err(|_| {
-            NetToolError::new(
-                ErrorCode::InvalidArgument,
-                "DPDK mbuf pool size exceeds u32 capacity",
-                false,
-            )
-        })?,
-        cache_size: 256,
-        data_room_size: 9_600,
-        socket_id: 0,
-    })?;
-    let mut port = pool.configure_port(PortConfiguration {
-        port_id,
-        rx_queues: queue_plan.rx_queues,
-        tx_queues: queue_plan.tx_queues,
-        rx_descriptors: 1024,
-        tx_descriptors: 1024,
-        socket_id: 0,
-    })?;
-    port.start()?;
-    let mut queue = port.tx_queue(0, &pool)?;
-    let mut sent = 0_u64;
-    while sent < packets {
-        let requested = u16::try_from((packets - sent).min(64)).unwrap_or(64);
-        let accepted = u64::from(queue.send_template_burst(&template, requested)?);
-        if accepted == 0 {
-            return Err(NetToolError::new(
-                ErrorCode::PreflightFailed,
-                "DPDK TX made no forward progress",
-                true,
-            ));
-        }
-        sent = sent.saturating_add(accepted);
-    }
-    drop(queue);
-    let hardware = port.stats()?;
-    let xstats = port.xstats()?;
+    let execution = nettool_backend_dpdk::execute_native_tx(
+        &nettool_backend_dpdk::NativeDpdkExecutionRequest {
+            pci_address: interface.to_owned(),
+            frame_size,
+            packets,
+            queue_plan,
+            frame_template: template,
+        },
+    )?;
     Ok(serde_json::json!({
         "backend": "dpdk",
         "interface": interface,
         "frame_size": frame_size,
         "packets_requested": packets,
-        "packets_sent": sent,
-        "unsent_packets": 0,
-        "hardware": hardware_stats_json(hardware, &xstats),
+        "packets_sent": execution.transmitted_packets,
+        "unsent_packets": packets.saturating_sub(execution.transmitted_packets),
+        "hardware": hardware_stats_json(execution.hardware, &execution.xstats),
     })
     .to_string())
 }
