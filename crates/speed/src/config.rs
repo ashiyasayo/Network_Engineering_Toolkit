@@ -52,6 +52,7 @@ impl SpeedRunRequest {
     /// # Errors
     ///
     /// 未知 backend、缺少 protocol-required 欄位或資源設定互相衝突時回傳錯誤。
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> Result<(), NetToolError> {
         if self.node.trim().is_empty() {
             return Err(invalid("speed run requires a remote node"));

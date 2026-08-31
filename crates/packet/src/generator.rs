@@ -226,6 +226,37 @@ impl RawGeneratorProfile {
         }
         Ok(bytes)
     }
+
+    /// 建立指定遠端 NIC MAC 的 raw Ethernet template。
+    ///
+    /// MAC 必須是六組十六進位 byte 且為 unicast，避免未驗證輸入寫入 wire header。
+    /// # Errors
+    ///
+    /// Destination MAC 不是合法 unicast address 或 profile 無效時回傳錯誤。
+    pub fn template_bytes_with_destination_mac(
+        &self,
+        destination_mac: &str,
+    ) -> Result<Vec<u8>, NetToolError> {
+        let mut bytes = self.template_bytes()?;
+        let parts: Vec<_> = destination_mac.split(':').collect();
+        if parts.len() != 6
+            || parts
+                .iter()
+                .any(|part| part.len() != 2 || !part.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(invalid("destination MAC address is invalid"));
+        }
+        let mut mac = [0_u8; 6];
+        for (slot, part) in mac.iter_mut().zip(parts) {
+            *slot = u8::from_str_radix(part, 16)
+                .map_err(|_| invalid("destination MAC address is invalid"))?;
+        }
+        if mac[0] & 1 != 0 || mac == [0; 6] {
+            return Err(invalid("destination MAC address must be unicast"));
+        }
+        bytes[0..6].copy_from_slice(&mac);
+        Ok(bytes)
+    }
 }
 
 fn checksum(bytes: &[u8]) -> u16 {
@@ -390,6 +421,19 @@ mod tests {
         assert_eq!(&bytes[34..36], &1000_u16.to_be_bytes());
         assert_eq!(bytes[46] & 0xf0, 0x50);
         assert_ne!(&bytes[50..52], &[0, 0]);
+    }
+
+    #[test]
+    fn writes_and_validates_destination_mac() {
+        let bytes = profile()
+            .template_bytes_with_destination_mac("02:00:00:00:00:aa")
+            .expect("mac");
+        assert_eq!(&bytes[0..6], &[2, 0, 0, 0, 0, 0xaa]);
+        assert!(
+            profile()
+                .template_bytes_with_destination_mac("01:00:00:00:00:aa")
+                .is_err()
+        );
     }
 
     #[test]

@@ -774,7 +774,7 @@ where
         }
         nettool_domain::SpeedProtocol::Raw => Err(NetToolError::new(
             ErrorCode::ActionUnsupported,
-            "raw data-plane executor is not attached",
+            "raw download receiver is not attached",
             false,
         )),
     };
@@ -808,6 +808,7 @@ where
     }))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_upload_sender(
     request: &SpeedRunRequest,
     destination: SocketAddr,
@@ -815,6 +816,64 @@ async fn run_upload_sender(
     prepared: &nettool_node::PreparedRemoteSpeedSession,
 ) -> Result<serde_json::Value, NetToolError> {
     match request.protocol {
+        nettool_domain::SpeedProtocol::Raw => {
+            let pci = request.accelerated_pci_address.clone().ok_or_else(|| {
+                NetToolError::new(ErrorCode::InvalidArgument, "raw DPDK request is missing PCI BDF", false)
+            })?;
+            let destination_mac = request.remote_mac_address.clone().ok_or_else(|| {
+                NetToolError::new(ErrorCode::InvalidArgument, "raw DPDK request is missing remote MAC", false)
+            })?;
+            let frame_size = request.frame_size.unwrap_or(64);
+            let bits_per_packet = u64::from(frame_size).saturating_mul(8).max(1);
+            let packets = request
+                .target_rate_bps
+                .unwrap_or(0)
+                .saturating_mul(request.duration_ms)
+                .checked_div(bits_per_packet.saturating_mul(1_000).max(1))
+                .unwrap_or(1)
+                .max(1);
+            let queue_plan = native_speed_queue_plan(&pci)?;
+            let profile = RawGeneratorProfile {
+                ethernet_size: frame_size,
+                network: GeneratorNetwork::Ipv4,
+                transport: GeneratorTransport::Udp,
+                source_ips: IpRange { start: "192.0.2.1".parse().unwrap(), end: "192.0.2.1".parse().unwrap() },
+                destination_ips: IpRange { start: "198.51.100.1".parse().unwrap(), end: "198.51.100.1".parse().unwrap() },
+                source_ports: PortRange { start: 10_000, end: 10_000 },
+                destination_ports: PortRange { start: 20_000, end: 20_000 },
+                flow_count: 1,
+                packet_rate: packets,
+            };
+            let template = profile.template_bytes_with_destination_mac(&destination_mac)?;
+            let result = tokio::task::spawn_blocking(move || {
+                nettool_backend_dpdk::execute_native_tx(
+                    &nettool_backend_dpdk::NativeDpdkExecutionRequest {
+                        pci_address: pci,
+                        frame_size,
+                        packets,
+                        queue_plan,
+                        frame_template: template,
+                    },
+                )
+            })
+            .await
+            .map_err(|_| NetToolError::new(ErrorCode::SpeedFailed, "native DPDK TX task panicked", false))??;
+            Ok(json!({
+                "backend":"dpdk",
+                "transmitted_packets":result.transmitted_packets,
+                "hardware": {
+                    "received_packets": result.hardware.received_packets,
+                    "transmitted_packets": result.hardware.transmitted_packets,
+                    "received_bytes": result.hardware.received_bytes,
+                    "transmitted_bytes": result.hardware.transmitted_bytes,
+                    "missed_packets": result.hardware.missed_packets,
+                    "receive_errors": result.hardware.receive_errors,
+                    "transmit_errors": result.hardware.transmit_errors,
+                    "rx_mbuf_failures": result.hardware.rx_mbuf_failures
+                },
+                "xstats": result.xstats.iter().map(|stat| json!({"name":stat.name,"value":stat.value})).collect::<Vec<_>>()
+            }))
+        }
         nettool_domain::SpeedProtocol::Tcp => {
             let config = TcpRunConfig {
                 streams: request.streams.unwrap_or(1),
@@ -873,12 +932,24 @@ async fn run_upload_sender(
                 )
             })
         }
-        nettool_domain::SpeedProtocol::Raw => Err(NetToolError::new(
-            ErrorCode::ActionUnsupported,
-            "raw data-plane executor is not attached",
-            false,
-        )),
     }
+}
+
+pub(super) fn native_speed_queue_plan(pci: &str) -> Result<nettool_backend_dpdk::QueuePlan, NetToolError> {
+    let report = nettool_backend_dpdk::probe_environment()?;
+    let nic = report.nics.iter().find(|nic| nic.pci_address.as_deref() == Some(pci)).ok_or_else(|| {
+        NetToolError::new(ErrorCode::PreflightFailed, "native DPDK PCI BDF was not found", false)
+    })?;
+    nettool_backend_dpdk::plan_queues(
+        nic.numa_node.ok_or_else(|| NetToolError::new(ErrorCode::PreflightFailed, "native DPDK NUMA node is unknown", false))?,
+        NicQueueCapacity {
+            receive: u16::try_from(nic.rx_queues.unwrap_or(0)).map_err(|_| NetToolError::new(ErrorCode::PreflightFailed, "native DPDK RX queue count is too large", false))?,
+            transmit: u16::try_from(nic.tx_queues.unwrap_or(0)).map_err(|_| NetToolError::new(ErrorCode::PreflightFailed, "native DPDK TX queue count is too large", false))?,
+        },
+        &[DataPlaneCpu { logical_id: 0, numa_node: nic.numa_node.unwrap_or(0) }],
+        1,
+        QueueSelection::Auto,
+    )
 }
 
 async fn wait_for_remote_result<S>(
