@@ -9,7 +9,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    CAPABILITY_TCP_SPEED, CAPABILITY_UDP_SPEED, LocalNodeIdentity, PrepareTcpBidirectionalRequest,
+    CAPABILITY_DPDK, CAPABILITY_RAW_PACKET_GENERATOR, CAPABILITY_TCP_SPEED, CAPABILITY_UDP_SPEED,
+    LocalNodeIdentity, PrepareDpdkReceiverRequest, PrepareTcpBidirectionalRequest,
     PrepareTcpRequest, PrepareTcpSenderRequest, PrepareUdpBidirectionalRequest, PrepareUdpRequest,
     PrepareUdpSenderRequest, SessionCoordinator,
 };
@@ -29,6 +30,7 @@ pub struct NodeControlService {
     bind_address: IpAddr,
     selected_minor: Option<u32>,
     coordinator: Arc<Mutex<SessionCoordinator>>,
+    dpdk_available: bool,
 }
 
 impl NodeControlService {
@@ -47,6 +49,7 @@ impl NodeControlService {
             bind_address,
             selected_minor: None,
             coordinator: Arc::new(Mutex::new(SessionCoordinator::new())),
+            dpdk_available: false,
         }
     }
 
@@ -66,6 +69,28 @@ impl NodeControlService {
             bind_address,
             selected_minor: None,
             coordinator,
+            dpdk_available: false,
+        }
+    }
+
+    /// 使用 Agent 已驗證的 native DPDK build 狀態建立 shared coordinator dispatcher。
+    #[must_use]
+    pub fn with_coordinator_and_dpdk(
+        local: LocalNodeIdentity,
+        expected_peer_node_id: [u8; 16],
+        peer_address: IpAddr,
+        bind_address: IpAddr,
+        coordinator: Arc<Mutex<SessionCoordinator>>,
+        dpdk_available: bool,
+    ) -> Self {
+        Self {
+            local,
+            expected_peer_node_id,
+            peer_address,
+            bind_address,
+            selected_minor: None,
+            coordinator,
+            dpdk_available,
         }
     }
 
@@ -127,7 +152,7 @@ impl NodeControlService {
         match message {
             envelope::ControlMessage::CapabilityRequest(_) => Ok(
                 envelope::ControlMessage::CapabilityResponse(CapabilityResponse {
-                    capabilities: runtime_capabilities(),
+                    capabilities: runtime_capabilities(self.dpdk_available),
                 }),
             ),
             envelope::ControlMessage::PrepareTest(prepare) => {
@@ -225,6 +250,13 @@ impl NodeControlService {
                 false,
             ));
         }
+        if prepare.backend == "dpdk" && !self.dpdk_available {
+            return Err(NetToolError::new(
+                ErrorCode::BackendNotBuilt,
+                "Node DPDK runtime is not built",
+                false,
+            ));
+        }
         if matches!(prepare.backend.as_str(), "dpdk" | "af_xdp" | "rio")
             && !valid_pci_bdf(&prepare.accelerated_pci_address)
         {
@@ -243,6 +275,43 @@ impl NodeControlService {
         }
         let now_unix_seconds = now_unix_nanoseconds / 1_000_000_000;
         let ttl = authorization_ttl(&prepare)?;
+        if prepare.backend == "dpdk" && prepare.test_type == "raw" {
+            if prepare.direction != "upload" {
+                return Err(NetToolError::new(
+                    ErrorCode::Unsupported,
+                    "DPDK raw receiver is currently supported for upload only",
+                    false,
+                ));
+            }
+            let pci_address = prepare.remote_accelerated_pci_address.clone();
+            let _plan = self.coordinator.lock().await.prepare_dpdk_receiver(
+                PrepareDpdkReceiverRequest {
+                    session_id,
+                    operation_id: prepare.operation_id,
+                    source_node_id: self.expected_peer_node_id,
+                    pci_address,
+                    duration_milliseconds: prepare.duration_ms,
+                    remote_mac_address: prepare.remote_mac_address,
+                    authorization_ttl_seconds: ttl,
+                },
+                now_unix_seconds,
+            )?;
+            let authorization_tag = self
+                .coordinator
+                .lock()
+                .await
+                .authorization(session_id)
+                .map(|authorization| authorization.authorization_tag.clone())
+                .unwrap_or_default();
+            return Ok(envelope::ControlMessage::PrepareTestResponse(
+                PrepareTestResponse {
+                    ready: true,
+                    data_port: 0,
+                    authorization_tag,
+                    source_data_port: 0,
+                },
+            ));
+        }
         let response = match prepare.test_type.as_str() {
             "tcp" if matches!(prepare.backend.as_str(), "socket" | "native") => {
                 let response = self
@@ -542,16 +611,21 @@ fn authorization_ttl(prepare: &PrepareTest) -> Result<u64, NetToolError> {
     Ok(seconds.saturating_add(10).clamp(10, 3_600))
 }
 
-fn runtime_capabilities() -> Vec<CapabilityMessage> {
-    [CAPABILITY_TCP_SPEED, CAPABILITY_UDP_SPEED]
-        .into_iter()
-        .map(|id| CapabilityMessage {
-            id,
-            min_version: 1,
-            max_version: 1,
-            available: true,
-        })
-        .collect()
+fn runtime_capabilities(dpdk_available: bool) -> Vec<CapabilityMessage> {
+    [
+        (CAPABILITY_TCP_SPEED, true),
+        (CAPABILITY_UDP_SPEED, true),
+        (CAPABILITY_DPDK, dpdk_available),
+        (CAPABILITY_RAW_PACKET_GENERATOR, dpdk_available),
+    ]
+    .into_iter()
+    .map(|(id, available)| CapabilityMessage {
+        id,
+        min_version: 1,
+        max_version: 1,
+        available,
+    })
+    .collect()
 }
 
 const fn state_name(state: nettool_node_protocol::NodeConnectionState) -> &'static str {

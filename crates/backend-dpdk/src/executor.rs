@@ -42,6 +42,8 @@ pub struct NativeDpdkReceiveRequest {
     pub pci_address: String,
     /// 接收 window；到期後回傳已觀測的計數器。
     pub duration: Duration,
+    /// 若指定，只計入 Ethernet destination MAC 相符的封包。
+    pub expected_destination_mac: Option<[u8; 6]>,
     /// 已由 resource manager 規劃並保留的 queue ownership。
     pub queue_plan: QueuePlan,
 }
@@ -87,7 +89,12 @@ impl NativeDpdkReceiveRequest {
     ///
     /// PCI BDF、接收時間或 queue plan 無效時回傳錯誤。
     pub fn validate(&self) -> Result<(), NetToolError> {
-        if !valid_pci_bdf(&self.pci_address) || self.duration.is_zero() {
+        if !valid_pci_bdf(&self.pci_address)
+            || self.duration.is_zero()
+            || self
+                .expected_destination_mac
+                .is_some_and(|mac| mac == [0; 6] || mac[0] & 1 != 0)
+        {
             return Err(NetToolError::new(
                 ErrorCode::InvalidArgument,
                 "native DPDK receive request is invalid",
@@ -253,9 +260,17 @@ pub fn execute_native_rx(
     let started = Instant::now();
     let mut received_packets = 0_u64;
     while started.elapsed() < request.duration {
-        let received = queue.receive_burst(|_| {})?;
-        received_packets =
-            received_packets.saturating_add(u64::try_from(received).unwrap_or(u64::MAX));
+        let expected_destination_mac = request.expected_destination_mac;
+        queue.receive_burst(|packet| {
+            if expected_destination_mac.is_none_or(|mac| {
+                packet
+                    .bytes
+                    .get(..6)
+                    .is_some_and(|destination| destination == mac)
+            }) {
+                received_packets = received_packets.saturating_add(1);
+            }
+        })?;
     }
     drop(queue);
     let hardware = port.stats()?;
@@ -317,7 +332,18 @@ mod tests {
         assert!(
             NativeDpdkReceiveRequest {
                 pci_address: "0000:01:00.0".to_owned(),
+                duration: Duration::from_secs(1),
+                expected_destination_mac: Some([1, 0, 0, 0, 0, 1]),
+                queue_plan: plan(),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            NativeDpdkReceiveRequest {
+                pci_address: "0000:01:00.0".to_owned(),
                 duration: Duration::ZERO,
+                expected_destination_mac: None,
                 queue_plan: plan(),
             }
             .validate()

@@ -24,10 +24,11 @@ pub use planner::{
 pub use server::NodeControlService;
 
 pub use session::{
-    DataPlaneAttempt, DataPlaneAuthorization, PrepareTcpBidirectionalRequest, PrepareTcpRequest,
-    PrepareTcpResponse, PrepareTcpSenderRequest, PrepareUdpBidirectionalRequest, PrepareUdpRequest,
-    PrepareUdpResponse, PrepareUdpSenderRequest, PreparedSocketBidirectional,
-    PreparedSocketReceiver, PreparedSocketSender, SessionCoordinator, authorize_data_plane,
+    DataPlaneAttempt, DataPlaneAuthorization, PrepareDpdkReceiverRequest,
+    PrepareTcpBidirectionalRequest, PrepareTcpRequest, PrepareTcpResponse, PrepareTcpSenderRequest,
+    PrepareUdpBidirectionalRequest, PrepareUdpRequest, PrepareUdpResponse, PrepareUdpSenderRequest,
+    PreparedDpdkReceiver, PreparedSocketBidirectional, PreparedSocketReceiver,
+    PreparedSocketSender, SessionCoordinator, authorize_data_plane,
 };
 
 use nettool_error::{ErrorCode, NetToolError};

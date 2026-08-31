@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Node raw DPDK upload 現在建立正式 RX session、依排程啟動 native executor，僅計入目標 MAC 相符的封包，並透過 `ResultQuery` 回傳保存的硬體計數器與 xstats。
 - 新增 `nettool-speed` accelerated executor 共用 contract，強制 backend/session/result 一致性；Agent 維持未附著 backend 的 fail-closed 行為，不會產生 synthetic throughput。
 - Windows NIC probe 改用固定 PowerShell UTF-8 JSON 查詢，以 `ifIndex` 將每張介面的 IP 位址正確關聯，並把 `ip_addresses` 帶到 `interface.list/show`、`dataplane.probe`、`perf.topology` 與 `nettool-dataplane probe`；中文介面名稱不再經由 lossy code-page 解析。
 - Windows MSI smoke test 改用原生 administrative extraction 驗證實際安裝檔名，避免 7-Zip 顯示 MSI 內部雜湊檔名而誤判套件缺少資源。

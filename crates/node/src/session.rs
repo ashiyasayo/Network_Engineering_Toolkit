@@ -20,6 +20,36 @@ use tokio::net::{TcpListener, UdpSocket};
 #[path = "session_prepare.rs"]
 mod session_prepare;
 
+/// DPDK RX session 的 prepare 參數。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrepareDpdkReceiverRequest {
+    /// 128-bit session ID。
+    pub session_id: [u8; 16],
+    /// Mutating operation ID。
+    pub operation_id: String,
+    /// 對端 Node ID。
+    pub source_node_id: [u8; 16],
+    /// 本端 PCI BDF；僅接受 canonical BDF。
+    pub pci_address: String,
+    /// 測量時間。
+    pub duration_milliseconds: u64,
+    /// 預期對端 MAC（保留於 session contract，供資料面過濾使用）。
+    pub remote_mac_address: String,
+    /// Authorization context lifetime。
+    pub authorization_ttl_seconds: u64,
+}
+
+/// DPDK RX worker 的最小執行計畫；實際 queue plan 由 Agent 依本機環境建立。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedDpdkReceiver {
+    /// 本端 PCI BDF。
+    pub pci_address: String,
+    /// 測量時間。
+    pub duration_milliseconds: u64,
+    /// 對端 MAC。
+    pub remote_mac_address: String,
+}
+
 /// Scheduler 到點後唯一取得的 authorized socket receiver worker。
 pub enum PreparedSocketReceiver {
     /// TCP listener 與每-stream authorization config。
@@ -281,9 +311,18 @@ struct UdpSession {
     sender_config: Option<UdpSenderConfig>,
 }
 
+struct DpdkSession {
+    authorization: DataPlaneAuthorization,
+    state: NodeConnectionState,
+    reservation_id: String,
+    lifecycle: SpeedTestLifecycle,
+    plan: Option<PreparedDpdkReceiver>,
+}
+
 enum SessionMut<'a> {
     Tcp(&'a mut TcpSession),
     Udp(&'a mut UdpSession),
+    Dpdk(&'a mut DpdkSession),
 }
 
 impl SessionMut<'_> {
@@ -291,6 +330,7 @@ impl SessionMut<'_> {
         match self {
             Self::Tcp(session) => &session.authorization,
             Self::Udp(session) => &session.authorization,
+            Self::Dpdk(session) => &session.authorization,
         }
     }
 
@@ -298,6 +338,7 @@ impl SessionMut<'_> {
         match self {
             Self::Tcp(session) => session.state,
             Self::Udp(session) => session.state,
+            Self::Dpdk(session) => session.state,
         }
     }
 
@@ -305,6 +346,7 @@ impl SessionMut<'_> {
         match self {
             Self::Tcp(session) => session.state = state,
             Self::Udp(session) => session.state = state,
+            Self::Dpdk(session) => session.state = state,
         }
     }
 
@@ -312,6 +354,7 @@ impl SessionMut<'_> {
         match self {
             Self::Tcp(session) => &mut session.lifecycle,
             Self::Udp(session) => &mut session.lifecycle,
+            Self::Dpdk(session) => &mut session.lifecycle,
         }
     }
 
@@ -319,6 +362,7 @@ impl SessionMut<'_> {
         match self {
             Self::Tcp(session) => &session.reservation_id,
             Self::Udp(session) => &session.reservation_id,
+            Self::Dpdk(session) => &session.reservation_id,
         }
     }
 
@@ -329,6 +373,9 @@ impl SessionMut<'_> {
             }
             Self::Udp(session) => {
                 session.socket.take();
+            }
+            Self::Dpdk(session) => {
+                session.plan.take();
             }
         }
     }
@@ -360,6 +407,10 @@ enum OperationRecord {
         request: PrepareUdpRequest,
         response: PrepareUdpResponse,
     },
+    PrepareDpdkReceiver {
+        request: PrepareDpdkReceiverRequest,
+        plan: PreparedDpdkReceiver,
+    },
     Start {
         session_id: [u8; 16],
         start_at_unix_nanoseconds: u64,
@@ -376,6 +427,7 @@ enum OperationRecord {
 pub struct SessionCoordinator {
     tcp_sessions: HashMap<[u8; 16], TcpSession>,
     udp_sessions: HashMap<[u8; 16], UdpSession>,
+    dpdk_sessions: HashMap<[u8; 16], DpdkSession>,
     operations: HashMap<String, OperationRecord>,
     results: HashMap<[u8; 16], TestResult>,
     pending_results: HashMap<[u8; 16], TestResult>,
@@ -390,7 +442,9 @@ impl SessionCoordinator {
     }
 
     fn session_exists(&self, session_id: [u8; 16]) -> bool {
-        self.tcp_sessions.contains_key(&session_id) || self.udp_sessions.contains_key(&session_id)
+        self.tcp_sessions.contains_key(&session_id)
+            || self.udp_sessions.contains_key(&session_id)
+            || self.dpdk_sessions.contains_key(&session_id)
     }
 
     fn session_state(&self, session_id: [u8; 16]) -> Option<NodeConnectionState> {
@@ -402,13 +456,23 @@ impl SessionCoordinator {
                     .get(&session_id)
                     .map(|session| session.state)
             })
+            .or_else(|| {
+                self.dpdk_sessions
+                    .get(&session_id)
+                    .map(|session| session.state)
+            })
     }
 
     fn session_mut(&mut self, session_id: [u8; 16]) -> Option<SessionMut<'_>> {
         if let Some(session) = self.tcp_sessions.get_mut(&session_id) {
             return Some(SessionMut::Tcp(session));
         }
-        self.udp_sessions.get_mut(&session_id).map(SessionMut::Udp)
+        if let Some(session) = self.udp_sessions.get_mut(&session_id) {
+            return Some(SessionMut::Udp(session));
+        }
+        self.dpdk_sessions
+            .get_mut(&session_id)
+            .map(SessionMut::Dpdk)
     }
 
     /// 確認遠端 READY 並排定共同開始時間；不會提前切換為 running。
@@ -1292,7 +1356,7 @@ fn io_error(error: std::io::Error) -> NetToolError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DataPlaneAttempt, DataPlaneAuthorization, PrepareTcpRequest,
+        DataPlaneAttempt, DataPlaneAuthorization, PrepareDpdkReceiverRequest, PrepareTcpRequest,
         PrepareUdpBidirectionalRequest, PrepareUdpRequest, PrepareUdpSenderRequest,
         PreparedSocketBidirectional, PreparedSocketReceiver, PreparedSocketSender,
         SessionCoordinator, authorize_data_plane,
@@ -1309,6 +1373,49 @@ mod tests {
         assert!(super::validate_result_json(br#"{"schema_version":"1.0"}"#).is_ok());
         assert!(super::validate_result_json(br#"{"bytes":42}"#).is_err());
         assert!(super::validate_result_json(b"not-json").is_err());
+    }
+
+    #[test]
+    fn dpdk_receiver_session_handoffs_once_and_persists_result() {
+        let mut coordinator = SessionCoordinator::new();
+        let request = PrepareDpdkReceiverRequest {
+            session_id: [9; 16],
+            operation_id: "dpdk-prepare-1".to_owned(),
+            source_node_id: [2; 16],
+            pci_address: "0000:01:00.0".to_owned(),
+            duration_milliseconds: 500,
+            remote_mac_address: "02:00:00:00:00:02".to_owned(),
+            authorization_ttl_seconds: 30,
+        };
+        let plan = coordinator
+            .prepare_dpdk_receiver(request.clone(), 100)
+            .expect("prepare");
+        assert_eq!(
+            coordinator
+                .prepare_dpdk_receiver(request, 101)
+                .expect("idempotent prepare"),
+            plan
+        );
+        coordinator
+            .start([9; 16], "dpdk-start-1", 110_000_000_000, 109_000_000_000)
+            .expect("schedule");
+        assert_eq!(
+            coordinator
+                .begin_and_take_dpdk_receiver([9; 16], 110_000_000_000)
+                .expect("worker"),
+            plan
+        );
+        assert!(
+            coordinator
+                .begin_and_take_dpdk_receiver([9; 16], 110_000_000_000)
+                .is_err()
+        );
+        let result_json = br#"{"schema_version":"1.0","outcome":"completed"}"#.to_vec();
+        let completed = coordinator
+            .complete([9; 16], result_json.clone())
+            .expect("complete");
+        assert_eq!(completed.result_json, result_json);
+        assert_eq!(coordinator.test_result([9; 16]).expect("query"), completed);
     }
 
     #[test]

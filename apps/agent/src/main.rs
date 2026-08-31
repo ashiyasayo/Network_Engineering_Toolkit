@@ -40,7 +40,10 @@ mod agent_runtime {
         ActionResponse, AgentEnvelope, MAX_FRAME_BYTES, PROTOCOL_MAJOR, PROTOCOL_MINOR,
         agent_envelope, decode_payload, encode_frame,
     };
-    use nettool_backend_dpdk::probe_environment;
+    use nettool_backend_dpdk::{
+        DataPlaneCpu, NativeDpdkReceiveRequest, NicQueueCapacity, QueueSelection,
+        execute_native_rx, probe_environment,
+    };
     use nettool_backend_pcap::CaptureFileSource;
     use nettool_benchmark::BenchmarkProfileRegistry;
     use nettool_error::{ErrorCode, NetToolError};
@@ -50,14 +53,17 @@ mod agent_runtime {
     };
     use nettool_identity::{IdentityMaterial, IdentityProvider, PlatformKeyringStore};
     use nettool_node::{
-        LocalDataPlanePorts, LocalNodeIdentity, NodeControlService, PreparedSocketBidirectional,
-        PreparedSocketReceiver, PreparedSocketSender, SessionCoordinator, TrustedNodeEndpoint,
-        certificate_public_key_fingerprint, connect_control_client, prepare_remote_speed_session,
-        random_session_id, read_control_frame, tls13_client_config, tls13_server_config,
-        write_control_frame,
+        LocalDataPlanePorts, LocalNodeIdentity, NodeControlService, PreparedDpdkReceiver,
+        PreparedSocketBidirectional, PreparedSocketReceiver, PreparedSocketSender,
+        SessionCoordinator, TrustedNodeEndpoint, certificate_public_key_fingerprint,
+        connect_control_client, prepare_remote_speed_session, random_session_id,
+        read_control_frame, tls13_client_config, tls13_server_config, write_control_frame,
     };
     use nettool_node_protocol::StopTest;
-    use nettool_packet::{AnalysisCoverage, PacketWorker, PacketWorkerConfiguration, StopToken};
+    use nettool_packet::{
+        AnalysisCoverage, GeneratorNetwork, GeneratorTransport, IpRange, PacketWorker,
+        PacketWorkerConfiguration, PortRange, RawGeneratorProfile, StopToken,
+    };
     use nettool_speed::{
         AcceleratedBackend, AuthorizedTcpSenderConfig, SpeedRunRequest, TcpRunConfig,
         UdpSenderConfig, run_authorized_tcp_receiver, run_authorized_tcp_sender, run_udp_receiver,
@@ -314,12 +320,13 @@ mod agent_runtime {
             .0
             .local_addr()
             .map_err(|error| format!("cannot inspect Node local address: {error}"))?;
-        let mut service = NodeControlService::with_coordinator(
+        let mut service = NodeControlService::with_coordinator_and_dpdk(
             local,
             peer_node_id,
             peer_address.ip(),
             local_address.ip(),
             Arc::clone(&coordinator),
+            nettool_backend_dpdk::is_backend_built(),
         );
         loop {
             let request = read_control_frame(&mut stream)
@@ -353,11 +360,13 @@ mod agent_runtime {
     }
 
     enum PreparedSocketWorker {
+        Dpdk(PreparedDpdkReceiver),
         Receiver(PreparedSocketReceiver),
         Sender(PreparedSocketSender),
         Bidirectional(PreparedSocketBidirectional),
     }
 
+    #[allow(clippy::too_many_lines)]
     fn spawn_scheduled_worker(
         coordinator: Arc<Mutex<SessionCoordinator>>,
         session_id: [u8; 16],
@@ -370,23 +379,94 @@ mod agent_runtime {
             }
             let worker = {
                 let mut coordinator = coordinator.lock().await;
-                match coordinator.begin_and_take_bidirectional(session_id, now_unix_nanoseconds()) {
-                    Ok(worker) => PreparedSocketWorker::Bidirectional(worker),
+                match coordinator.begin_and_take_dpdk_receiver(session_id, now_unix_nanoseconds()) {
+                    Ok(worker) => PreparedSocketWorker::Dpdk(worker),
                     Err(_) => match coordinator
-                        .begin_and_take_receiver(session_id, now_unix_nanoseconds())
+                        .begin_and_take_bidirectional(session_id, now_unix_nanoseconds())
                     {
-                        Ok(receiver) => PreparedSocketWorker::Receiver(receiver),
+                        Ok(worker) => PreparedSocketWorker::Bidirectional(worker),
                         Err(_) => match coordinator
-                            .begin_and_take_sender(session_id, now_unix_nanoseconds())
+                            .begin_and_take_receiver(session_id, now_unix_nanoseconds())
                         {
-                            Ok(sender) => PreparedSocketWorker::Sender(sender),
-                            // 冪等 Start 可能產生重複 scheduler；只有取得 endpoint 的 task 可執行 worker。
-                            Err(_) => return,
+                            Ok(receiver) => PreparedSocketWorker::Receiver(receiver),
+                            Err(_) => match coordinator
+                                .begin_and_take_sender(session_id, now_unix_nanoseconds())
+                            {
+                                Ok(sender) => PreparedSocketWorker::Sender(sender),
+                                // 冪等 Start 可能產生重複 scheduler；只有取得 endpoint 的 task 可執行 worker。
+                                Err(_) => return,
+                            },
                         },
                     },
                 }
             };
             let result = match worker {
+                PreparedSocketWorker::Dpdk(plan) => {
+                    let queue_plan = match action_speed::native_speed_queue_plan(&plan.pci_address)
+                    {
+                        Ok(queue_plan) => queue_plan,
+                        Err(error) => {
+                            let mut coordinator = coordinator.lock().await;
+                            let failure = serde_json::to_vec(&json!({
+                                "schema_version":"1.0", "outcome":"failed",
+                                "error":{"code":error.code.as_str(),"message":error.message,"retryable":error.retryable}
+                            })).unwrap_or_else(|_| br#"{"schema_version":"1.0","outcome":"failed"}"#.to_vec());
+                            let _ = coordinator.fail(session_id, failure);
+                            return;
+                        }
+                    };
+                    let expected_destination_mac = parse_unicast_mac(&plan.remote_mac_address);
+                    match expected_destination_mac {
+                        Ok(expected_destination_mac) => {
+                            let request = NativeDpdkReceiveRequest {
+                                pci_address: plan.pci_address,
+                                duration: Duration::from_millis(plan.duration_milliseconds),
+                                expected_destination_mac,
+                                queue_plan,
+                            };
+                            match tokio::task::spawn_blocking(move || execute_native_rx(&request))
+                                .await
+                            {
+                                Ok(Ok(result)) => {
+                                    let hardware = json!({
+                                        "received_packets": result.hardware.received_packets,
+                                        "transmitted_packets": result.hardware.transmitted_packets,
+                                        "received_bytes": result.hardware.received_bytes,
+                                        "transmitted_bytes": result.hardware.transmitted_bytes,
+                                        "missed_packets": result.hardware.missed_packets,
+                                        "receive_errors": result.hardware.receive_errors,
+                                        "transmit_errors": result.hardware.transmit_errors,
+                                        "rx_mbuf_failures": result.hardware.rx_mbuf_failures,
+                                    });
+                                    let xstats: Vec<_> = result
+                                        .xstats
+                                        .into_iter()
+                                        .map(|stat| json!({"name": stat.name, "value": stat.value}))
+                                        .collect();
+                                    serde_json::to_vec(&json!({
+                                    "schema_version":"1.0", "outcome":"completed", "protocol":"raw",
+                                    "role":"receiver", "received_packets":result.received_packets,
+                                    "hardware":hardware, "xstats":xstats
+                                    }))
+                                    .map_err(|error| {
+                                        NetToolError::new(
+                                            ErrorCode::SpeedFailed,
+                                            error.to_string(),
+                                            false,
+                                        )
+                                    })
+                                }
+                                Ok(Err(error)) => Err(error),
+                                Err(error) => Err(NetToolError::new(
+                                    ErrorCode::SpeedFailed,
+                                    error.to_string(),
+                                    true,
+                                )),
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
                 PreparedSocketWorker::Receiver(PreparedSocketReceiver::Tcp(listener, config)) => {
                     run_authorized_tcp_receiver(listener, config)
                         .await
@@ -452,6 +532,35 @@ mod agent_runtime {
                 false,
             )
         })
+    }
+
+    fn parse_unicast_mac(value: &str) -> Result<Option<[u8; 6]>, NetToolError> {
+        let parts: Vec<_> = value.split(':').collect();
+        if parts.len() != 6 {
+            return Err(NetToolError::new(
+                ErrorCode::InvalidArgument,
+                "DPDK receiver destination MAC is invalid",
+                false,
+            ));
+        }
+        let mut mac = [0_u8; 6];
+        for (slot, part) in mac.iter_mut().zip(parts) {
+            *slot = u8::from_str_radix(part, 16).map_err(|_| {
+                NetToolError::new(
+                    ErrorCode::InvalidArgument,
+                    "DPDK receiver destination MAC is invalid",
+                    false,
+                )
+            })?;
+        }
+        if mac == [0; 6] || mac[0] & 1 != 0 {
+            return Err(NetToolError::new(
+                ErrorCode::InvalidArgument,
+                "DPDK receiver destination MAC must be unicast",
+                false,
+            ));
+        }
+        Ok(Some(mac))
     }
 
     fn sender_result_json<T: serde::Serialize>(
@@ -1164,7 +1273,7 @@ mod agent_runtime {
         fn speed_run_validates_contract_before_trusted_node_lookup() {
             let storage = Storage::in_memory().expect("storage");
             let invalid = validate_speed_request(
-                br#"{"node":"node-b","protocol":"raw","backend":"socket","direction":"upload","duration_ms":10000,"warmup_ms":1000,"cooldown_ms":1000,"streams":null,"frame_size":64,"target_rate_bps":100000000000,"auto_tune":false,"latency_under_load":false,"cpus":null,"numa_node":null}"#,
+                br#"{"node":"node-b","protocol":"raw","backend":"socket","direction":"upload","duration_ms":10000,"warmup_ms":1000,"cooldown_ms":1000,"streams":null,"frame_size":64,"target_rate_bps":100000000000,"auto_tune":false,"latency_under_load":false,"cpus":null,"numa_node":null,"accelerated_pci_address":null,"accelerated_interface_name":null,"remote_accelerated_pci_address":null,"remote_mac_address":null}"#,
                 &storage,
             );
             assert_eq!(
@@ -1172,7 +1281,7 @@ mod agent_runtime {
                 "CLI.INVALID_ARGUMENT"
             );
             let valid = validate_speed_request(
-                br#"{"node":"node-b","protocol":"raw","backend":"dpdk","direction":"upload","duration_ms":10000,"warmup_ms":1000,"cooldown_ms":1000,"streams":null,"frame_size":64,"target_rate_bps":100000000000,"auto_tune":false,"latency_under_load":false,"cpus":null,"numa_node":null,"accelerated_pci_address":"0000:01:00.0","accelerated_interface_name":null}"#,
+                br#"{"node":"node-b","protocol":"raw","backend":"dpdk","direction":"upload","duration_ms":10000,"warmup_ms":1000,"cooldown_ms":1000,"streams":null,"frame_size":64,"target_rate_bps":100000000000,"auto_tune":false,"latency_under_load":false,"cpus":null,"numa_node":null,"accelerated_pci_address":"0000:01:00.0","accelerated_interface_name":null,"remote_accelerated_pci_address":"0000:02:00.0","remote_mac_address":"02:00:00:00:00:02"}"#,
                 &storage,
             );
             assert_eq!(

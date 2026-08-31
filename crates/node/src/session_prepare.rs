@@ -1,6 +1,8 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
+#[path = "session_prepare_dpdk.rs"]
+mod session_prepare_dpdk;
 #[path = "session_prepare_tcp.rs"]
 mod session_prepare_tcp;
 #[path = "session_prepare_tcp_bidirectional.rs"]
