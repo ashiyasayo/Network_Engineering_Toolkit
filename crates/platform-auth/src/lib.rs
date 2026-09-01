@@ -12,6 +12,380 @@ pub struct PeerIdentity {
     pub process_id: Option<u32>,
 }
 
+/// 取得目前 interactive 使用者的 SID。
+///
+/// 此函式以 process token 取得 SID；portable Helper 使用它將 Named Pipe
+/// 限制在啟動桌面程式的同一位使用者，而不是信任 HTTP 或命令列提供的值。
+///
+/// # Errors
+///
+/// 無法讀取 token 或 SID 無法轉為文字時回傳錯誤。
+#[cfg(windows)]
+pub fn current_user_sid() -> Result<String, String> {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Security::TOKEN_QUERY;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = null_mut();
+    // 安全性：目前程序的 pseudo-handle 有效，token 輸出指標可寫入。
+    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } != 0;
+    if !opened {
+        return Err("cannot open current process token".to_owned());
+    }
+    let result = token_user_sid(token);
+    // 安全性：OpenProcessToken 成功後 token 只在此處關閉一次。
+    unsafe { CloseHandle(token) };
+    result
+}
+
+/// 以 UAC `runas` 啟動固定的 Helper executable。
+///
+/// 呼叫端必須先決定 binary、Pipe、state 目錄與 SID；本函式不接受 shell
+/// 指令，也不會以目前使用者權限偷偷降級執行。
+///
+/// # Errors
+///
+/// 使用者拒絕 UAC、檔案不存在或 Windows 拒絕啟動時回傳錯誤。
+#[cfg(windows)]
+pub fn launch_elevated(executable: &std::path::Path, arguments: &[String]) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let executable = executable
+        .canonicalize()
+        .map_err(|error| format!("canonicalize helper executable: {error}"))?;
+    if !executable.is_file() {
+        return Err("helper executable is not a regular file".to_owned());
+    }
+    let verb = wide("runas");
+    let executable = wide(executable.as_os_str());
+    let parameters = wide(
+        arguments
+            .iter()
+            .map(|argument| quote_windows_argument(argument))
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    // 安全性：所有 UTF-16 buffer 都以 NUL 結尾且在呼叫期間保持存活；無視窗 handle
+    // 與工作目錄不擴大權限範圍，runas 只會顯示 Windows 標準 UAC 同意提示。
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            executable.as_ptr(),
+            parameters.as_ptr(),
+            std::ptr::null(),
+            SW_HIDE,
+        )
+    } as isize;
+    if result <= 32 {
+        return Err(format!(
+            "Windows UAC helper launch was rejected (ShellExecute code {result})"
+        ));
+    }
+    Ok(())
+}
+
+/// 取得 Windows 系統 Hosts 檔案的 canonical location。
+///
+/// 不採用可被目前 process 環境覆寫的 `SystemRoot`，避免 portable Helper
+/// 在提權後把 Hosts 操作導向任意使用者指定路徑。
+///
+/// # Errors
+///
+/// Windows 無法回傳系統目錄時回傳錯誤。
+#[cfg(windows)]
+pub fn windows_hosts_path() -> Result<std::path::PathBuf, String> {
+    use windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+
+    let mut buffer = vec![0_u16; 32_768];
+    // 安全性：buffer 可寫入且長度以 UTF-16 code units 傳遞，符合 Windows API 契約。
+    let length = unsafe {
+        GetSystemWindowsDirectoryW(
+            buffer.as_mut_ptr(),
+            u32::try_from(buffer.len()).map_err(|_| "Windows directory buffer overflow")?,
+        )
+    };
+    let length = usize::try_from(length).map_err(|_| "Windows directory length overflow")?;
+    if length == 0 || length >= buffer.len() {
+        return Err("cannot determine Windows system directory".to_owned());
+    }
+    let directory = String::from_utf16(&buffer[..length])
+        .map_err(|_| "Windows system directory is not UTF-16")?;
+    Ok(std::path::PathBuf::from(directory)
+        .join("drivers")
+        .join("etc")
+        .join("hosts"))
+}
+
+#[cfg(windows)]
+static SERVICE_STOP_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(windows)]
+static SERVICE_ENTRY: std::sync::OnceLock<fn() -> Result<(), String>> = std::sync::OnceLock::new();
+
+#[cfg(windows)]
+static SERVICE_NAME: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+
+/// 將固定 Helper workload 接到 Windows SCM service dispatcher。
+///
+/// FFI 與 service control callback 全數留在 platform adapter，讓 Helper
+/// 本體維持 safe Rust。停止要求只會設旗標，workload 可先完成自身 rollback。
+///
+/// # Errors
+///
+/// Dispatcher 無法連接 SCM、重複啟動或 workload 結束失敗時回傳錯誤。
+#[cfg(windows)]
+pub fn run_windows_service(
+    service_name: &str,
+    workload: fn() -> Result<(), String>,
+) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::System::Services::{SERVICE_TABLE_ENTRYW, StartServiceCtrlDispatcherW};
+
+    SERVICE_STOP_REQUESTED.store(false, std::sync::atomic::Ordering::Release);
+    SERVICE_ENTRY
+        .set(workload)
+        .map_err(|_| "Windows service workload was already configured".to_owned())?;
+    SERVICE_NAME
+        .set(
+            std::ffi::OsStr::new(service_name)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect(),
+        )
+        .map_err(|_| "Windows service name was already configured".to_owned())?;
+    let name = SERVICE_NAME
+        .get()
+        .ok_or("Windows service name is unavailable")?;
+    let table = [
+        SERVICE_TABLE_ENTRYW {
+            lpServiceName: name.as_ptr().cast_mut(),
+            lpServiceProc: Some(windows_service_main),
+        },
+        SERVICE_TABLE_ENTRYW {
+            lpServiceName: std::ptr::null_mut(),
+            lpServiceProc: None,
+        },
+    ];
+    // 安全性：service table 以 NUL 結尾，且會持續存活至 dispatcher 返回。
+    let started = unsafe { StartServiceCtrlDispatcherW(table.as_ptr()) } != 0;
+    if !started {
+        // 安全性：GetLastError 會讀取 dispatcher 失敗後的 thread-local 錯誤碼。
+        let code = unsafe { GetLastError() };
+        return Err(format!(
+            "Windows service dispatcher failed (Win32 error {code})"
+        ));
+    }
+    Ok(())
+}
+
+/// 回傳 SCM stop control 是否已抵達；workload 應等待可恢復狀態完成後才離開。
+#[cfg(windows)]
+#[must_use]
+pub fn windows_service_stop_requested() -> bool {
+    SERVICE_STOP_REQUESTED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn windows_service_main(_count: u32, _arguments: *mut *mut u16) {
+    use windows_sys::Win32::System::Services::{
+        RegisterServiceCtrlHandlerExW, SERVICE_ACCEPT_STOP, SERVICE_RUNNING, SERVICE_START_PENDING,
+        SERVICE_STOPPED,
+    };
+
+    let Some(name) = SERVICE_NAME.get() else {
+        return;
+    };
+    // 安全性：service name 以 NUL 結尾，callback 不使用外部 context。
+    let handle = unsafe {
+        RegisterServiceCtrlHandlerExW(
+            name.as_ptr(),
+            Some(windows_service_control_handler),
+            std::ptr::null(),
+        )
+    };
+    if handle.is_null() {
+        return;
+    }
+    set_windows_service_status(handle, SERVICE_START_PENDING, 0, 0);
+    set_windows_service_status(handle, SERVICE_RUNNING, SERVICE_ACCEPT_STOP, 0);
+    let exit_code = SERVICE_ENTRY
+        .get()
+        .copied()
+        .ok_or_else(|| "Windows service workload is unavailable".to_owned())
+        .and_then(|workload| workload())
+        .map_or(1, |()| 0);
+    set_windows_service_status(handle, SERVICE_STOPPED, 0, exit_code);
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn windows_service_control_handler(
+    control: u32,
+    _event_type: u32,
+    _event_data: *mut std::ffi::c_void,
+    _context: *mut std::ffi::c_void,
+) -> u32 {
+    use windows_sys::Win32::System::Services::SERVICE_CONTROL_STOP;
+    if control == SERVICE_CONTROL_STOP {
+        SERVICE_STOP_REQUESTED.store(true, std::sync::atomic::Ordering::Release);
+    }
+    0
+}
+
+#[cfg(windows)]
+fn set_windows_service_status(
+    handle: windows_sys::Win32::System::Services::SERVICE_STATUS_HANDLE,
+    state: windows_sys::Win32::System::Services::SERVICE_STATUS_CURRENT_STATE,
+    controls: u32,
+    exit_code: u32,
+) {
+    use windows_sys::Win32::System::Services::{
+        SERVICE_STATUS, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus,
+    };
+
+    let status = SERVICE_STATUS {
+        dwServiceType: SERVICE_WIN32_OWN_PROCESS,
+        dwCurrentState: state,
+        dwControlsAccepted: controls,
+        dwWin32ExitCode: exit_code,
+        dwServiceSpecificExitCode: 0,
+        dwCheckPoint: 0,
+        dwWaitHint: 0,
+    };
+    // 安全性：service handle 來自 SCM，status 在呼叫期間有效。
+    let _ = unsafe { SetServiceStatus(handle, &raw const status) };
+}
+
+#[cfg(windows)]
+fn token_user_sid(token: windows_sys::Win32::Foundation::HANDLE) -> Result<String, String> {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_USER, TokenUser};
+
+    let mut required = 0_u32;
+    // SAFETY: 第一次呼叫只查詢 token user buffer 所需大小，null buffer 為 API 指定用法。
+    let _ = unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &raw mut required) };
+    if required == 0 {
+        return Err("cannot query token user size".to_owned());
+    }
+    let required_bytes = usize::try_from(required).map_err(|_| "token size overflow")?;
+    let word_count = required_bytes
+        .checked_add(std::mem::size_of::<usize>() - 1)
+        .ok_or("token size overflow")?
+        / std::mem::size_of::<usize>();
+    let mut buffer = vec![0_usize; word_count];
+    // SAFETY: buffer 可容納先前查得大小，輸出長度指標有效。
+    let read = unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            required,
+            &raw mut required,
+        )
+    } != 0;
+    if !read {
+        return Err("cannot read token user".to_owned());
+    }
+    // SAFETY: TokenUser 成功時，buffer 開頭為有效 TOKEN_USER。
+    let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
+    let mut sid_text = null_mut();
+    // SAFETY: SID 由 token buffer 持有，輸出指標有效。
+    let converted = unsafe { ConvertSidToStringSidW(user.User.Sid, &raw mut sid_text) } != 0;
+    if !converted || sid_text.is_null() {
+        return Err("cannot convert token SID".to_owned());
+    }
+    let mut length = 0_usize;
+    // SAFETY: API 回傳 NUL-terminated UTF-16 LocalAlloc 字串。
+    unsafe {
+        while *sid_text.add(length) != 0 {
+            length += 1;
+        }
+    }
+    // SAFETY: 前述量測長度位於 API 保證的 UTF-16 buffer 範圍內。
+    let sid = unsafe { std::slice::from_raw_parts(sid_text, length) };
+    let result = String::from_utf16(sid).map_err(|_| "token SID is not UTF-16".to_owned());
+    // SAFETY: ConvertSidToStringSidW 使用 LocalAlloc，LocalFree 必須釋放一次。
+    unsafe { LocalFree(sid_text.cast()) };
+    result
+}
+
+#[cfg(windows)]
+fn wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    value
+        .as_ref()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(windows)]
+fn quote_windows_argument(argument: &str) -> String {
+    if !argument.contains([' ', '\t', '"']) && !argument.is_empty() {
+        return argument.to_owned();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0_usize;
+    for character in argument.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '"' => {
+                quoted.push_str(&"\\".repeat(backslashes.saturating_mul(2).saturating_add(1)));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.push_str(&"\\".repeat(backslashes));
+                quoted.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes.saturating_mul(2)));
+    quoted.push('"');
+    quoted
+}
+
+/// 非 Windows 平台不能取得 Windows SID。
+#[cfg(not(windows))]
+pub fn current_user_sid() -> Result<String, String> {
+    Err("Windows current user SID is unavailable on this platform".to_owned())
+}
+
+/// 非 Windows 平台不能透過 UAC 啟動 Helper。
+#[cfg(not(windows))]
+pub fn launch_elevated(_executable: &std::path::Path, _arguments: &[String]) -> Result<(), String> {
+    Err("Windows UAC helper launch is unavailable on this platform".to_owned())
+}
+
+/// 非 Windows 平台沒有 Windows 系統 Hosts 路徑。
+#[cfg(not(windows))]
+pub fn windows_hosts_path() -> Result<std::path::PathBuf, String> {
+    Err("Windows Hosts path is unavailable on this platform".to_owned())
+}
+
+/// 非 Windows 平台沒有 SCM service dispatcher。
+#[cfg(not(windows))]
+pub fn run_windows_service(
+    _service_name: &str,
+    _workload: fn() -> Result<(), String>,
+) -> Result<(), String> {
+    Err("Windows service dispatcher is unavailable on this platform".to_owned())
+}
+
+/// 非 Windows 平台不會收到 SCM stop control。
+#[cfg(not(windows))]
+#[must_use]
+pub fn windows_service_stop_requested() -> bool {
+    false
+}
+
 /// 以 Windows `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)` 原子替換受控檔案。
 ///
 /// 此 primitive 只供已驗證的 helper-owned path 使用；呼叫端仍必須先完成

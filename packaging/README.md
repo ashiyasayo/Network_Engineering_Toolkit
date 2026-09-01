@@ -13,7 +13,7 @@ cargo run -p nettool-desktop
 ## 發行
 
 - macOS：`./packaging/macos/build-desktop-app.sh` 建立 `NetTool.app`，再用 `install-desktop.sh` 安裝。正式發佈前必須 Developer ID codesign、notarize、staple。
-- Windows：`./packaging/windows/build-release.ps1` staging 後，使用 Tauri/WiX 產生 MSI；GitHub Release 另外提供包含五個 binary 的免安裝 `nettool-windows-x64-portable.zip`，正式 MSI 與 portable binary 必須 Authenticode 簽章。
+- Windows：`./packaging/windows/build-release.ps1` staging 後，以 Tauri/WiX 產生桌面 MSI，並用 `build-helper-msi.ps1` 產生獨立的特權 Helper MSI；GitHub Release 同時提供一般與 UAC portable ZIP，正式 MSI 與 portable binary 必須 Authenticode 簽章。
 - Linux：`./packaging/linux/build-release.sh` staging 後，使用 Tauri bundler 產生 AppImage/deb；`install-desktop.sh` 適合內部部署。
 
 使用 Tauri bundler 時，先執行 `cargo build --release -p nettool -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane`，再執行 `./packaging/prepare-tauri-resources.sh`，最後執行 `cargo tauri build`。Tauri bundle 會把四個 runtime sidecar 從 `apps/desktop/resources` 一起帶入。
@@ -33,4 +33,4 @@ GitHub Actions 會在 Ubuntu、macOS、Windows runner 平行產生 AppImage/deb�
 
 ## Portable bundle
 
-Windows portable ZIP 解壓縮後直接執行 `nettool-desktop.exe` 即可啟動桌面殼層；五個 binary 與 [portable 使用限制](PORTABLE-README.md) 必須留在同一個目錄。這個 bundle 不安裝 privileged Helper；需要變更網路或 Hosts 時，仍須依平台另行安裝並啟動 Helper。
+Windows `nettool-windows-x64-portable.zip` 解壓縮後直接執行 `nettool-desktop.exe` 即可啟動桌面殼層；五個 binary 與 [portable 使用限制](PORTABLE-README.md) 必須留在同一個目錄。它不安裝 privileged Helper。`nettool-windows-x64-portable-uac.zip` 多附一次性 Helper，只有 GUI Apply 時才顯示 UAC，結束 Safe Apply 後不留駐；詳見 [UAC portable 說明](PORTABLE-UAC-README.md)。

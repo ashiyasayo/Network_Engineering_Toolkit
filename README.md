@@ -31,7 +31,7 @@ cargo run -p nettool-desktop
 - [規格追蹤矩陣](docs/REQUIREMENT_TRACEABILITY.md)：需求、實作模組、測試與驗收狀態。
 - [Hardware Acceptance Runbook](docs/HARDWARE_ACCEPTANCE.md)：Linux/Windows backend 與 100GbE 實機驗收。
 - [發行與安裝](packaging/README.md)：桌面套件、sidecar staging 與各平台安裝流程。
-- [Portable desktop bundle](packaging/PORTABLE-README.md)：免安裝 bundle 的啟動方式與無 Helper 限制。
+- [Windows Helper 與 Portable](packaging/windows/README.md)：獨立 Helper MSI、一般 portable 與按需 UAC portable 的安全邊界。
 
 ## 目前範圍
 

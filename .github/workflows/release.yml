@@ -117,7 +117,7 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version '2.11.4' --locked
       - name: Build release sidecars
-        run: cargo build --release -p nettool -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane
+        run: cargo build --release -p nettool -p nettool-desktop -p nettool-agent -p nettool-gui -p nettool-dataplane -p nettool-helper
       - name: Stage Unix Tauri resources
         if: runner.os != 'Windows'
         run: ./packaging/prepare-tauri-resources.sh
@@ -148,7 +148,8 @@ jobs:
               'target/release/nettool-desktop.exe',
               'target/release/nettool-agent.exe',
               'target/release/nettool-gui.exe',
-              'target/release/nettool-dataplane.exe'
+              'target/release/nettool-dataplane.exe',
+              'target/release/nettool-helper.exe'
             ) + @(Get-ChildItem apps/desktop/resources -File -Filter '*.exe' | Select-Object -ExpandProperty FullName)
             foreach ($target in $targets) {
               if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw "missing binary to sign: $target" }
@@ -161,19 +162,30 @@ jobs:
           }
       - name: Build Tauri packages
         run: cd apps/desktop && cargo tauri build --bundles ${{ matrix.bundles }}
+      - name: Build Windows Helper MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (cargo pkgid -p nettool-helper | Select-String -Pattern '@(.+)$').Matches.Groups[1].Value
+          .\packaging\windows\build-helper-msi.ps1 -HelperBinary target\release\nettool-helper.exe -Version $version
       - name: Prepare Windows portable directory
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $portable = Join-Path $env:RUNNER_TEMP 'nettool-windows-x64-portable'
-          New-Item -ItemType Directory -Force $portable | Out-Null
+          $portableUac = Join-Path $env:RUNNER_TEMP 'nettool-windows-x64-portable-uac'
+          New-Item -ItemType Directory -Force $portable, $portableUac | Out-Null
           foreach ($name in @('nettool.exe','nettool-desktop.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe')) {
             Copy-Item "target/release/$name" (Join-Path $portable $name) -Force
+            Copy-Item "target/release/$name" (Join-Path $portableUac $name) -Force
           }
+          Copy-Item 'target/release/nettool-helper.exe' (Join-Path $portableUac 'nettool-helper.exe') -Force
           Copy-Item 'packaging/PORTABLE-README.md' (Join-Path $portable 'README-portable.md') -Force
+          Copy-Item 'packaging/PORTABLE-UAC-README.md' (Join-Path $portableUac 'README-portable-uac.md') -Force
           foreach ($name in @('LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
             Copy-Item $name (Join-Path $portable $name) -Force
+            Copy-Item $name (Join-Path $portableUac $name) -Force
           }
       - name: Sign Windows MSI
         if: runner.os == 'Windows' && env.RELEASE_MODE == 'stable'
@@ -188,10 +200,12 @@ jobs:
             [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
             $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $signtool) { throw 'signtool.exe is not available on the Windows runner' }
-            $msi = Get-ChildItem target/release/bundle -Recurse -File -Filter '*.msi' | Select-Object -First 1
-            if (-not $msi) { throw 'missing MSI package to sign' }
-            & $signtool.Source sign /fd SHA256 /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr 'https://timestamp.digicert.com' /td SHA256 $msi.FullName
-            if ($LASTEXITCODE -ne 0) { throw 'signtool failed for MSI' }
+            $msis = @(Get-ChildItem target/release/bundle -Recurse -File -Filter '*.msi')
+            if ($msis.Count -eq 0) { throw 'missing MSI package to sign' }
+            foreach ($msi in $msis) {
+              & $signtool.Source sign /fd SHA256 /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr 'https://timestamp.digicert.com' /td SHA256 $msi.FullName
+              if ($LASTEXITCODE -ne 0) { throw "signtool failed for MSI: $($msi.FullName)" }
+            }
           }
           finally {
             Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
@@ -202,10 +216,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $portable = Join-Path $env:RUNNER_TEMP 'nettool-windows-x64-portable'
+          $portableUac = Join-Path $env:RUNNER_TEMP 'nettool-windows-x64-portable-uac'
           $archive = 'target/release/bundle/nettool-windows-x64-portable.zip'
+          $uacArchive = 'target/release/bundle/nettool-windows-x64-portable-uac.zip'
           New-Item -ItemType Directory -Force (Split-Path -Parent $archive) | Out-Null
           Compress-Archive -Path (Join-Path $portable '*') -DestinationPath $archive -CompressionLevel Optimal -Force
-          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'failed to create Windows portable ZIP' }
+          Compress-Archive -Path (Join-Path $portableUac '*') -DestinationPath $uacArchive -CompressionLevel Optimal -Force
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf) -or -not (Test-Path -LiteralPath $uacArchive -PathType Leaf)) { throw 'failed to create Windows portable ZIP' }
       - name: Sign Linux release artifacts
         if: runner.os == 'Linux' && env.RELEASE_MODE == 'stable'
         shell: bash
@@ -322,8 +339,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $msi = Get-ChildItem target/release/bundle -Recurse -File -Filter *.msi | Select-Object -First 1
+          $msi = Get-ChildItem target/release/bundle -Recurse -File -Filter 'NetTool_*.msi' | Select-Object -First 1
           if (-not $msi) { throw 'missing MSI package' }
+          $helperMsi = Get-ChildItem target/release/bundle -Recurse -File -Filter 'NetToolHelper_*.msi' | Select-Object -First 1
+          if (-not $helperMsi) { throw 'missing Helper MSI package' }
           $extract = Join-Path $env:RUNNER_TEMP 'nettool-msi'
           New-Item -ItemType Directory -Force $extract | Out-Null
           $msiLog = Join-Path $env:RUNNER_TEMP 'nettool-msi-admin.log'
@@ -341,22 +360,32 @@ jobs:
           foreach ($name in @('nettool.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe','LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
             if (-not (Get-ChildItem $installedRoot -Recurse -File -Filter $name)) { throw "missing packaged resource: $name" }
           }
-          $zip = Get-ChildItem target/release/bundle -Recurse -File -Filter '*-portable.zip' | Select-Object -First 1
+          $zip = Get-ChildItem target/release/bundle -Recurse -File -Filter 'nettool-windows-x64-portable.zip' | Select-Object -First 1
           if (-not $zip) { throw 'missing Windows portable ZIP package' }
+          $uacZip = Get-ChildItem target/release/bundle -Recurse -File -Filter 'nettool-windows-x64-portable-uac.zip' | Select-Object -First 1
+          if (-not $uacZip) { throw 'missing Windows portable UAC ZIP package' }
           $portableExtract = Join-Path $env:RUNNER_TEMP 'nettool-portable'
           New-Item -ItemType Directory -Force $portableExtract | Out-Null
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $portableExtract -Force
           foreach ($name in @('nettool.exe','nettool-desktop.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe','README-portable.md','LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
             if (-not (Get-ChildItem $portableExtract -Recurse -File -Filter $name)) { throw "missing portable resource: $name" }
           }
+          $uacExtract = Join-Path $env:RUNNER_TEMP 'nettool-portable-uac'
+          New-Item -ItemType Directory -Force $uacExtract | Out-Null
+          Expand-Archive -LiteralPath $uacZip.FullName -DestinationPath $uacExtract -Force
+          foreach ($name in @('nettool.exe','nettool-desktop.exe','nettool-agent.exe','nettool-gui.exe','nettool-dataplane.exe','nettool-helper.exe','README-portable-uac.md','LICENSE.md','LICENSE-MIT','LICENSE-APACHE')) {
+            if (-not (Get-ChildItem $uacExtract -Recurse -File -Filter $name)) { throw "missing portable UAC resource: $name" }
+          }
           if ($env:RELEASE_MODE -eq 'stable') {
             foreach ($path in @(
               $msi.FullName,
+              $helperMsi.FullName,
               (Join-Path $portableExtract 'nettool.exe'),
               (Join-Path $portableExtract 'nettool-desktop.exe'),
               (Join-Path $portableExtract 'nettool-agent.exe'),
               (Join-Path $portableExtract 'nettool-gui.exe'),
-              (Join-Path $portableExtract 'nettool-dataplane.exe')
+              (Join-Path $portableExtract 'nettool-dataplane.exe'),
+              (Join-Path $uacExtract 'nettool-helper.exe')
             )) {
               if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne 'Valid') { throw "invalid Authenticode signature: $path" }
             }

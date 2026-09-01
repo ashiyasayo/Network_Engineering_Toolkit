@@ -454,13 +454,13 @@ flowchart LR
 | --- | --- | --- |
 | Linux | AppImage、deb | bundle sidecars、license、Linux artifact signatures（stable） |
 | macOS | `.app`、DMG | app bundle sidecars、license、Developer ID codesign/notarization/stapling（stable） |
-| Windows | MSI、`nettool-windows-x64-portable.zip` | MSI administrative extraction、portable manifest、license、Authenticode（stable） |
+| Windows | desktop MSI、Helper MSI、一般／UAC portable ZIP | MSI administrative extraction、portable manifest、license、Authenticode（stable） |
 
-Windows portable ZIP 包含 `nettool.exe`、`nettool-desktop.exe`、`nettool-agent.exe`、`nettool-gui.exe` 與 `nettool-dataplane.exe`，解壓後可直接執行 desktop shell；它不包含 privileged Helper，因此不能把 portable 模式當成已安裝的網路設定服務。
+一般 Windows portable ZIP 包含 `nettool.exe`、`nettool-desktop.exe`、`nettool-agent.exe`、`nettool-gui.exe` 與 `nettool-dataplane.exe`，解壓後可直接執行 desktop shell；它不包含 privileged Helper，因此不能把 portable 模式當成已安裝的網路設定服務。UAC portable ZIP 額外包含 Helper，但 desktop 只會在使用者按 Apply 時以 `runas` 啟動它；每個 session 使用獨立 Named Pipe，且 Helper 只接受目前使用者 SID，完成 confirm、rollback、deadline rollback 或 idle 後即結束。
 
 ### Helper 安裝邊界
 
-桌面安裝包只負責 user-space App 與 sidecars；Helper 是獨立安裝步驟，不會因安裝 GUI 而自動取得 root/admin 權限。Linux 提供 root-only `install-helper.sh` 與 systemd unit；macOS/Windows packaging 先以 allowlist staging installer 安裝 user-space binaries，再依平台政策註冊特權服務與簽章。
+桌面安裝包只負責 user-space App 與 sidecars；Helper 是獨立安裝步驟，不會因安裝 GUI 而自動取得 root/admin 權限。Linux 提供 root-only `install-helper.sh` 與 systemd unit；Windows 的 `NetTool Helper` MSI 以原生 SCM dispatcher 註冊 LocalSystem service，安裝 wrapper 把 interactive user SID 寫入 service arguments，Helper 再以該 SID 驗證每個 Named Pipe client。服務收到 stop control 時會等待所有 pending Safe Apply 完成復原再離開。
 
 ## 11. 明確不宣稱的事項
 
@@ -468,7 +468,7 @@ Windows portable ZIP 包含 `nettool.exe`、`nettool-desktop.exe`、`nettool-age
 
 - RIO、DPDK native PMD 或 AF_XDP zero-copy 的真實硬體效能與穩定性。
 - `100G Certified`；必須有完整 Environment、approved policy 與 Gate A–J evidence。
-- Windows/macOS privileged Helper 的正式 service registration、ACL、rollback 與跨版本驗收。
+- macOS privileged Helper 的正式 service registration、ACL、rollback 與跨版本驗收。
 - 沒有外部 signing/notarization credentials 時的 production-ready stable installer。
 - 未通過 filter、parser、capture 或 analyzer boundary 的封包品質；任何 drop 或 sampling 都必須在結果中保留 coverage/confidence。
 

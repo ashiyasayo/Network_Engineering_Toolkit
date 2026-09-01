@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Windows 新增獨立 `NetTool Helper` MSI：以原生 SCM service dispatcher 執行、由安裝器傳入允許的 Windows SID，桌面 MSI 保持不含特權 Helper。
+- Windows portable 分為一般版與 UAC 版：一般版保留 profile 管理及診斷功能並明確要求 Helper 才能套用；UAC 版只在 GUI Apply 時啟動一次性 SID-bound Helper，完成 Safe Apply 或 idle 後自行結束且不註冊 Service。
+
+- GUI Profiles 頁面新增 profile list、完整設定讀取與建立表單；所有操作仍透過既有 typed Agent action，建立不會直接套用系統網路設定。
 - Node raw DPDK upload 現在建立正式 RX session、依排程啟動 native executor，僅計入目標 MAC 相符的封包，並透過 `ResultQuery` 回傳保存的硬體計數器與 xstats。
 - 新增 `nettool-speed` accelerated executor 共用 contract，強制 backend/session/result 一致性；Agent 維持未附著 backend 的 fail-closed 行為，不會產生 synthetic throughput。
 - Windows NIC probe 改用固定 PowerShell UTF-8 JSON 查詢，以 `ifIndex` 將每張介面的 IP 位址正確關聯，並把 `ip_addresses` 帶到 `interface.list/show`、`dataplane.probe`、`perf.topology` 與 `nettool-dataplane probe`；中文介面名稱不再經由 lossy code-page 解析。

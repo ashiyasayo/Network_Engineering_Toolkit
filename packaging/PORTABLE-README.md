@@ -2,7 +2,7 @@
 
 這是免安裝的桌面 bundle。Windows portable ZIP 解壓縮後，請在同一個目錄執行 `nettool-desktop.exe`；不要只搬移其中一個 binary，因為 desktop shell 會從同目錄尋找 Agent、GUI 與 dataplane sidecar。
 
-Portable bundle 不會安裝、註冊或啟動 privileged Helper，也不會繞過 UAC。因此下列操作在未設定 Helper 時會 fail closed：
+Portable bundle 不會安裝、註冊或啟動 privileged Helper，也不會繞過 UAC。它仍可建立、讀取與匯出 profile，以及執行診斷與測試；GUI 在按下 Apply profile 時會明確提示「安裝 Helper MSI 或改用 portable UAC bundle」。因此下列操作在未設定 Helper 時會 fail closed：
 
 - `profile apply`、`profile confirm`、`profile rollback`
 - `ip set`、`ip dhcp`、`dns set`

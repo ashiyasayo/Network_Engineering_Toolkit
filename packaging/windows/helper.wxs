@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="NetTool Helper"
+           Language="1033"
+           Version="$(var.HelperVersion)"
+           Manufacturer="NetTool"
+           UpgradeCode="8d4a21ef-8a10-4fa4-9774-9ef457e6c52f">
+    <Package Id="*" InstallerVersion="450" Compressed="yes" InstallScope="perMachine" />
+    <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="no" DowngradeErrorMessage="A newer NetTool Helper version is already installed." />
+    <Media Id="1" Cabinet="nettool-helper.cab" EmbedCab="yes" />
+
+    <Property Id="NETTOOL_ALLOWED_SID" Secure="yes" />
+    <Condition Message="NETTOOL_ALLOWED_SID is required. Run the documented install-helper.ps1 wrapper.">
+      Installed OR NETTOOL_ALLOWED_SID
+    </Condition>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="NetToolHelperInstallDirectory" Name="NetTool Helper" />
+      </Directory>
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="NetToolDataDirectory" Name="NetTool">
+          <Directory Id="NetToolHelperStateDirectory" Name="Helper" />
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="NetToolHelperInstallDirectory">
+      <Component Id="NetToolHelperServiceComponent" Guid="8D9C6781-28AC-4ED6-A0A5-0C5D1B0E60D5" Win64="yes">
+        <File Id="NetToolHelperBinary" Source="$(var.HelperBinary)" KeyPath="yes" Checksum="yes" />
+        <ServiceInstall Id="NetToolHelperServiceInstall"
+                        Name="NetToolHelper"
+                        DisplayName="NetTool Privileged Helper"
+                        Description="Applies NetTool network profiles through an authenticated local Named Pipe."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Vital="yes"
+                        Arguments="--service --pipe &quot;\\.\pipe\NetTool.Helper.Service&quot; --allow-sid &quot;[NETTOOL_ALLOWED_SID]&quot; --state-dir &quot;[CommonAppDataFolder]NetTool\Helper&quot; --hosts-file &quot;[WindowsFolder]System32\drivers\etc\hosts&quot;" />
+        <ServiceControl Id="NetToolHelperServiceControl" Name="NetToolHelper" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="NetToolHelperStateDirectory">
+      <Component Id="NetToolHelperStateComponent" Guid="A54C5FA3-A12F-461D-AADB-79B8964CF07B" Win64="yes">
+        <CreateFolder />
+        <File Id="NetToolHelperInstalledMarker" Source="$(var.HelperMarker)" KeyPath="yes" />
+        <RemoveFolder Id="RemoveNetToolHelperStateDirectory" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="NetToolHelperFeature" Title="NetTool Privileged Helper" Level="1">
+      <ComponentRef Id="NetToolHelperServiceComponent" />
+      <ComponentRef Id="NetToolHelperStateComponent" />
+    </Feature>
+  </Product>
+</Wix>

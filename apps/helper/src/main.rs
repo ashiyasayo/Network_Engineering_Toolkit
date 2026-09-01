@@ -516,6 +516,7 @@ mod windows {
     use std::env;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+    use std::time::Instant;
     use tokio::net::windows::named_pipe::ServerOptions;
     use tokio::time::{Duration, interval, timeout};
 
@@ -675,10 +676,13 @@ mod windows {
             .create(&configuration.pipe_path)
             .map_err(pipe_error)?;
         let mut watchdog = interval(Duration::from_secs(1));
+        let mut last_request = Instant::now();
+        let mut has_started_safe_apply = false;
         loop {
             tokio::select! {
                 result = listener.connect() => {
                     result.map_err(pipe_error)?;
+                    last_request = Instant::now();
                     let mut connected = listener;
                     listener = ServerOptions::new().create(&configuration.pipe_path).map_err(pipe_error)?;
                     match timeout(REQUEST_TIMEOUT, serve_named_pipe_one(&mut connected, &policy, &mut service)).await {
@@ -686,9 +690,22 @@ mod windows {
                         Ok(Err(error)) => eprintln!("{}", error.code.as_str()),
                         Err(_) => eprintln!("HELPER.REQUEST_TIMEOUT"),
                     }
+                    has_started_safe_apply |= !service.safe_apply.pending().is_empty();
                 }
                 _ = watchdog.tick() => {
                     service.safe_apply.recover_expired(&mut service.executor, now_unix_seconds())?;
+                    if has_started_safe_apply && service.safe_apply.pending().is_empty() {
+                        tracing::info!("portable Helper completed Safe Apply and will exit");
+                        return Ok(());
+                    }
+                    if configuration.idle_timeout.is_some_and(|timeout| !has_started_safe_apply && last_request.elapsed() >= timeout) {
+                        tracing::info!("portable Helper idle timeout completed without pending Safe Apply");
+                        return Ok(());
+                    }
+                    if nettool_platform_auth::windows_service_stop_requested() && service.safe_apply.pending().is_empty() {
+                        tracing::info!("helper stop completed after Safe Apply state settled");
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -699,6 +716,7 @@ mod windows {
         allowed_sid: String,
         state_directory: PathBuf,
         hosts_path: PathBuf,
+        idle_timeout: Option<Duration>,
     }
 
     fn parse_arguments(
@@ -708,6 +726,7 @@ mod windows {
         let mut allowed_sid = None;
         let mut state_directory = None;
         let mut hosts_path = None;
+        let mut idle_timeout = None;
         let mut arguments = arguments.into_iter();
         while let Some(argument) = arguments.next() {
             let target = match argument.as_str() {
@@ -715,6 +734,8 @@ mod windows {
                 "--allow-sid" => &mut allowed_sid,
                 "--state-dir" => &mut state_directory,
                 "--hosts-file" => &mut hosts_path,
+                "--idle-timeout-seconds" => &mut idle_timeout,
+                "--service" => continue,
                 _ => return Err(invalid("unknown helper argument")),
             };
             *target = Some(
@@ -729,6 +750,16 @@ mod windows {
             PathBuf::from(state_directory.ok_or_else(|| invalid("--state-dir is required"))?);
         let hosts_path =
             PathBuf::from(hosts_path.ok_or_else(|| invalid("--hosts-file is required"))?);
+        let idle_timeout = idle_timeout
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|seconds| (10..=600).contains(seconds))
+                    .map(Duration::from_secs)
+                    .ok_or_else(|| invalid("--idle-timeout-seconds must be between 10 and 600"))
+            })
+            .transpose()?;
         if !pipe_path.starts_with(r"\\.\pipe\")
             || !state_directory.is_absolute()
             || !hosts_path.is_absolute()
@@ -741,6 +772,7 @@ mod windows {
             allowed_sid,
             state_directory,
             hosts_path,
+            idle_timeout,
         })
     }
 
@@ -770,13 +802,100 @@ mod windows {
     fn protocol_error(error: serde_json::Error) -> NetToolError {
         NetToolError::new(ErrorCode::ProtocolInvalid, error.to_string(), false)
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::parse_arguments;
+
+        #[test]
+        fn portable_arguments_accept_a_bounded_idle_timeout() {
+            let root = std::env::temp_dir()
+                .join(format!("nettool-helper-test-{}-valid", std::process::id()));
+            let state = root.join("state");
+            let hosts = root.join("hosts");
+            let configuration = parse_arguments([
+                "--pipe".to_owned(),
+                r"\\.\pipe\NetTool.Helper.Portable.test".to_owned(),
+                "--allow-sid".to_owned(),
+                "S-1-5-21-test".to_owned(),
+                "--state-dir".to_owned(),
+                state.display().to_string(),
+                "--hosts-file".to_owned(),
+                hosts.display().to_string(),
+                "--idle-timeout-seconds".to_owned(),
+                "120".to_owned(),
+            ])
+            .expect("portable arguments are valid");
+            assert_eq!(
+                configuration.idle_timeout.map(|value| value.as_secs()),
+                Some(120)
+            );
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn portable_arguments_reject_an_unbounded_idle_timeout() {
+            let root = std::env::temp_dir().join(format!(
+                "nettool-helper-test-{}-invalid",
+                std::process::id()
+            ));
+            let state = root.join("state");
+            let hosts = root.join("hosts");
+            assert!(
+                parse_arguments([
+                    "--pipe".to_owned(),
+                    r"\\.\pipe\NetTool.Helper.Portable.test".to_owned(),
+                    "--allow-sid".to_owned(),
+                    "S-1-5-21-test".to_owned(),
+                    "--state-dir".to_owned(),
+                    state.display().to_string(),
+                    "--hosts-file".to_owned(),
+                    hosts.display().to_string(),
+                    "--idle-timeout-seconds".to_owned(),
+                    "601".to_owned(),
+                ])
+                .is_err()
+            );
+        }
+    }
 }
 
 #[cfg(windows)]
-#[tokio::main]
-async fn main() {
+fn run_windows_service_workload() -> Result<(), String> {
+    tokio::runtime::Runtime::new()
+        .map_err(|error| error.to_string())
+        .and_then(|runtime| {
+            runtime
+                .block_on(windows::run())
+                .map_err(|error| error.message)
+        })
+}
+
+#[cfg(windows)]
+fn main() {
     init_logging();
-    if let Err(error) = windows::run().await {
+    let service_mode = std::env::args().any(|argument| argument == "--service");
+    let result = if service_mode {
+        nettool_platform_auth::run_windows_service("NetToolHelper", run_windows_service_workload)
+            .map_err(|message| {
+                nettool_error::NetToolError::new(
+                    nettool_error::ErrorCode::HelperTransportFailed,
+                    message,
+                    false,
+                )
+            })
+    } else {
+        tokio::runtime::Runtime::new()
+            .map_err(|error| {
+                nettool_error::NetToolError::new(
+                    nettool_error::ErrorCode::HelperTransportFailed,
+                    error.to_string(),
+                    false,
+                )
+            })
+            .and_then(|runtime| runtime.block_on(windows::run()))
+    };
+    if let Err(error) = result {
         eprintln!("{}: {}", error.code.as_str(), error.message);
         std::process::exit(1);
     }
