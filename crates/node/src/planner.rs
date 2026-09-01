@@ -323,6 +323,8 @@ mod tests {
         request.protocol = SpeedProtocol::Udp;
         request.backend = "socket".to_owned();
         request.accelerated_pci_address = None;
+        request.remote_accelerated_pci_address = None;
+        request.remote_mac_address = None;
         request.direction = Direction::Upload;
         request.frame_size = None;
         request.latency_under_load = false;
@@ -357,6 +359,8 @@ mod tests {
         request.protocol = SpeedProtocol::Udp;
         request.backend = "socket".to_owned();
         request.accelerated_pci_address = None;
+        request.remote_accelerated_pci_address = None;
+        request.remote_mac_address = None;
         request.direction = Direction::Download;
         request.frame_size = None;
         request.latency_under_load = false;
