@@ -15,6 +15,12 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 struct RuntimeProcesses(Mutex<Vec<Child>>);
 static HEALTH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+struct PortableHelperConfiguration {
+    binary: PathBuf,
+    pipe: String,
+    state_directory: PathBuf,
+}
+
 fn health_token() -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -58,6 +64,49 @@ fn configured_binary(name: &str, resource_dir: Option<&Path>) -> Result<PathBuf,
     sibling_binary(name, resource_dir).ok_or_else(|| format!("cannot locate bundled {name} binary"))
 }
 
+fn portable_helper_configuration(
+    resource_dir: Option<&Path>,
+    session_token: &str,
+) -> Option<PortableHelperConfiguration> {
+    #[cfg(windows)]
+    {
+        let binary = sibling_binary("nettool-helper", resource_dir)?;
+        let state_root = std::env::var_os("LOCALAPPDATA")?;
+        let state_directory = PathBuf::from(state_root)
+            .join("NetTool")
+            .join("portable-helper")
+            .join(session_token);
+        Some(PortableHelperConfiguration {
+            binary,
+            pipe: format!(r"\\.\pipe\NetTool.Helper.Portable.{session_token}"),
+            state_directory,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (resource_dir, session_token);
+        None
+    }
+}
+
+fn installed_helper_pipe() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let program_data = std::env::var_os("ProgramData")?;
+        let marker = PathBuf::from(program_data)
+            .join("NetTool")
+            .join("Helper")
+            .join("helper-installed.marker");
+        marker
+            .is_file()
+            .then(|| r"\\.\pipe\NetTool.Helper.Service".to_owned())
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 fn spawn_runtime(resource_dir: Option<&Path>) -> Result<(Vec<Child>, SocketAddr, String), String> {
     let agent = configured_binary("nettool-agent", resource_dir)?;
     let gui = configured_binary("nettool-gui", resource_dir)?;
@@ -69,23 +118,60 @@ fn spawn_runtime(resource_dir: Option<&Path>) -> Result<(Vec<Child>, SocketAddr,
         .map_err(|error| format!("cannot read reserved GUI port: {error}"))?;
     drop(listener);
     let health_path = format!("/health-{}", health_token());
+    let session_token = health_token();
+    let configured_helper_pipe = std::env::var("NETTOOL_HELPER_SOCKET")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(installed_helper_pipe);
+    let portable_helper = if configured_helper_pipe.is_none() {
+        portable_helper_configuration(resource_dir, &session_token)
+    } else {
+        None
+    };
+    let helper_pipe = configured_helper_pipe.or_else(|| {
+        portable_helper
+            .as_ref()
+            .map(|configuration| configuration.pipe.clone())
+    });
+    let helper_mode = if portable_helper.is_some() {
+        "portable-uac"
+    } else if helper_pipe.is_some() {
+        "external"
+    } else {
+        "required"
+    };
     let mut children = Vec::with_capacity(2);
-    let agent_child = Command::new(agent)
+    let mut agent_command = Command::new(agent);
+    agent_command
         .env("NETTOOL_DATAPLANE_BIN", &dataplane)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if let Some(pipe) = &helper_pipe {
+        agent_command.env("NETTOOL_HELPER_SOCKET", pipe);
+    }
+    let agent_child = agent_command
         .spawn()
         .map_err(|error| format!("cannot start nettool-agent: {error}"))?;
     children.push(agent_child);
-    match Command::new(gui)
+    let mut gui_command = Command::new(gui);
+    gui_command
         .env("NETTOOL_GUI_LISTEN", address.to_string())
         .env("NETTOOL_GUI_HEALTH_PATH", &health_path)
+        .env("NETTOOL_HELPER_MODE", helper_mode)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-    {
+        .stderr(Stdio::inherit());
+    if let Some(configuration) = &portable_helper {
+        gui_command
+            .env("NETTOOL_PORTABLE_HELPER_BINARY", &configuration.binary)
+            .env("NETTOOL_PORTABLE_HELPER_PIPE", &configuration.pipe)
+            .env(
+                "NETTOOL_PORTABLE_HELPER_STATE_DIR",
+                &configuration.state_directory,
+            );
+    }
+    match gui_command.spawn() {
         Ok(child) => children.push(child),
         Err(error) => {
             for child in &mut children {

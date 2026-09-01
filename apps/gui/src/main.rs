@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -177,6 +178,7 @@ async fn route(request: HttpRequest) -> HttpResponse {
                 json!({"success":false,"error":{"code":"GUI.INVALID_JSON","message":error.to_string()}}),
             ),
         },
+        ("POST", "/api/portable-helper") => start_portable_helper(),
         _ => text_response(
             "404 Not Found",
             "text/plain; charset=utf-8",
@@ -248,6 +250,82 @@ async fn execute_action(call: ActionCall) -> HttpResponse {
     };
     tracing::info!(request_id = %request_id, operation = "gui.action", elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "GUI action completed");
     response
+}
+
+fn start_portable_helper() -> HttpResponse {
+    match std::env::var("NETTOOL_HELPER_MODE").as_deref() {
+        Ok("external") => json_response(
+            "200 OK",
+            json!({"success":true,"mode":"external","message":"configured Helper will be used"}),
+        ),
+        Ok("portable-uac") => match portable_helper_arguments() {
+            Ok((binary, arguments)) => {
+                match nettool_platform_auth::launch_elevated(&binary, &arguments) {
+                    Ok(()) => json_response(
+                        "202 Accepted",
+                        json!({"success":true,"mode":"portable-uac","message":"UAC Helper launch requested"}),
+                    ),
+                    Err(error) => json_response(
+                        "403 Forbidden",
+                        json!({"success":false,"error":{"code":"HELPER.UAC_REJECTED","message":error}}),
+                    ),
+                }
+            }
+            Err(error) => json_response(
+                "409 Conflict",
+                json!({"success":false,"error":{"code":"HELPER.PORTABLE_INVALID","message":error}}),
+            ),
+        },
+        _ => json_response(
+            "409 Conflict",
+            json!({"success":false,"error":{"code":"HELPER.REQUIRED","message":"This portable bundle cannot apply profiles. Install the Helper MSI or use the portable UAC bundle."}}),
+        ),
+    }
+}
+
+fn portable_helper_arguments() -> Result<(PathBuf, Vec<String>), String> {
+    let binary = PathBuf::from(required_environment("NETTOOL_PORTABLE_HELPER_BINARY")?);
+    let pipe = required_environment("NETTOOL_PORTABLE_HELPER_PIPE")?;
+    let state_directory = PathBuf::from(required_environment("NETTOOL_PORTABLE_HELPER_STATE_DIR")?);
+    if !binary.is_file()
+        || !binary
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("nettool-helper.exe"))
+    {
+        return Err("portable Helper binary is unavailable".to_owned());
+    }
+    if !pipe.starts_with(r"\\.\pipe\NetTool.Helper.Portable.") || pipe.len() > 240 {
+        return Err("portable Helper pipe is invalid".to_owned());
+    }
+    if !state_directory.is_absolute() {
+        return Err("portable Helper state directory is invalid".to_owned());
+    }
+    let sid = nettool_platform_auth::current_user_sid()
+        .map_err(|error| format!("cannot determine current user SID: {error}"))?;
+    let hosts_path = nettool_platform_auth::windows_hosts_path()
+        .map_err(|error| format!("cannot determine Windows Hosts path: {error}"))?;
+    Ok((
+        binary,
+        vec![
+            "--pipe".to_owned(),
+            pipe,
+            "--allow-sid".to_owned(),
+            sid,
+            "--state-dir".to_owned(),
+            state_directory.display().to_string(),
+            "--hosts-file".to_owned(),
+            hosts_path.display().to_string(),
+            "--idle-timeout-seconds".to_owned(),
+            "120".to_owned(),
+        ],
+    ))
+}
+
+fn required_environment(name: &str) -> Result<String, String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{name} is missing"))
 }
 
 fn request_id() -> String {
@@ -322,6 +400,15 @@ mod tests {
                 .expect("JSON")
                 .contains("system.health")
         );
+    }
+
+    #[test]
+    fn profiles_page_exposes_typed_create_and_read_controls() {
+        assert!(super::INDEX_HTML.contains("profile.create"));
+        assert!(super::INDEX_HTML.contains("profile.show"));
+        assert!(super::INDEX_HTML.contains("profile.apply"));
+        assert!(super::INDEX_HTML.contains("/api/portable-helper"));
+        assert!(super::INDEX_HTML.contains("Create profile"));
     }
 
     #[tokio::test]

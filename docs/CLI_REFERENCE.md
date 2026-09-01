@@ -40,7 +40,7 @@ cargo run -p nettool-desktop
 cargo run -p nettool-gui
 ```
 
-預設網址為 `http://127.0.0.1:8765`，可用 `NETTOOL_GUI_LISTEN=127.0.0.1:<port>` 變更連接埠。GUI 不直接執行網路或特權操作，所有查詢與變更均經 Agent Action API；Agent 未啟動時會回傳明確的 unavailable 錯誤。Node 頁面提供首次 pairing 表單，可選取 DER certificate、勾選 out-of-band fingerprint confirmation，並明確確認 identity replacement；欄位仍由 Agent `node.pair` action 做最終驗證。
+預設網址為 `http://127.0.0.1:8765`，可用 `NETTOOL_GUI_LISTEN=127.0.0.1:<port>` 變更連接埠。GUI 不直接執行網路或特權操作，所有查詢與變更均經 Agent Action API；Agent 未啟動時會回傳明確的 unavailable 錯誤。Profiles 頁面可列出、讀取、建立與套用 profile；套用固定使用既有 Safe Apply。一般 portable 會提示安裝 Helper MSI 或使用 UAC portable bundle；UAC portable 只在按 Apply 時啟動一次性、目前 SID 限制的 Helper。Node 頁面提供首次 pairing 表單，可選取 DER certificate、勾選 out-of-band fingerprint confirmation，並明確確認 identity replacement；欄位仍由 Agent `node.pair` action 做最終驗證。
 
 Dashboard 的 Action Console 只列出 `ActionRegistry` 已註冊項目；payload 必須是 JSON，未知 action（包含任意 shell/command）會在 Agent 連線前拒絕。
 
@@ -140,9 +140,11 @@ Agent 管理的 capture lifecycle 可使用 `nettool packet capture start --inte
 
 網路設定操作使用 `nettool profile apply <id-or-name> --interface <id> [--confirm-timeout <seconds>]`（`--timeout` 為相容別名），完成後以 `nettool profile confirm <operation-id>` 或 `nettool profile rollback <operation-id>` 結束 Safe Apply；`nettool hosts list` 讀取目前 hosts，`nettool hosts replace <profile-id> '<entries-json>'`、`nettool hosts add <profile-id> <address> <hostname> [comment]`、`nettool hosts remove <profile-id> <hostname>`、`nettool hosts enable <profile-id> <hostname>`、`nettool hosts disable <profile-id> <hostname>`、`nettool hosts backup` 與 `nettool hosts restore` 透過同一 privileged Helper 寫入指定 managed section 或 Helper-owned backup。停用項目以受控 marker 保留，Agent 未設定 `NETTOOL_HELPER_SOCKET` 時會回報 `HELPER.NOT_CONFIGURED`（`privileged helper socket is not configured`），不會直接執行特權命令。
 
-## Portable / 無 Helper 模式
+## Windows Helper 與 Portable 模式
 
-Windows `nettool-windows-x64-portable.zip` 解壓縮後可直接執行 `nettool-desktop.exe`，不需要安裝器；desktop shell 會從同一目錄尋找 `nettool.exe`、`nettool-agent.exe`、`nettool-gui.exe` 與 `nettool-dataplane.exe`。Portable bundle 不會安裝或啟動 privileged Helper。
+Windows desktop MSI 不含 privileged Helper。要持續提供受 SID 限制的系統網路變更，另安裝 `NetToolHelper_*.msi`，並以 `packaging/windows/install-helper.ps1` 傳入目前使用者 SID；它會註冊 `NetToolHelper` Windows Service。桌面下次啟動時會發現其固定 service pipe。
+
+`nettool-windows-x64-portable.zip` 解壓縮後可直接執行 `nettool-desktop.exe`，不需要安裝器；它不含 Helper，可建立、讀取、匯出 profile 與執行診斷／測試。`nettool-windows-x64-portable-uac.zip` 另含 Helper，但不註冊 Service；只有 GUI 使用者按 Apply profile 並接受 UAC 時才啟動，Pipe 僅接受該使用者 SID，confirm、rollback、deadline rollback 完成或兩分鐘 idle 後即自行結束。
 
 沒有 `NETTOOL_HELPER_SOCKET` 時，`profile apply/confirm/rollback`、`ip set`、`ip dhcp`、`dns set` 與所有 `hosts` actions（包含 `hosts list`）會以 `HELPER.NOT_CONFIGURED` 失敗且不可重試；已設定 transport 但連線失敗或逾時則回傳可重試的 `HELPER.TRANSPORT_FAILED`。要求未連結 accelerated backend 時，Agent 會回傳 `DATAPLANE.BACKEND_NOT_BUILT`，不會回退成模擬結果。需要系統網路或 Hosts 變更時，請依平台另行安裝並啟動 Helper。
 

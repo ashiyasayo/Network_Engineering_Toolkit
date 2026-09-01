@@ -9,6 +9,7 @@ rust-version.workspace = true
 nettool-action = { path = "../../crates/action" }
 nettool-agent-client = { path = "../../crates/agent-client" }
 nettool-agent-protocol = { path = "../../crates/agent-protocol" }
+nettool-platform-auth = { path = "../../crates/platform-auth" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

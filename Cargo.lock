@@ -2258,6 +2258,7 @@ dependencies = [
  "nettool-action",
  "nettool-agent-client",
  "nettool-agent-protocol",
+ "nettool-platform-auth",
  "serde",
  "serde_json",
  "tokio",
