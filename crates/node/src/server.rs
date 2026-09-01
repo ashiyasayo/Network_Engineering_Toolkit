@@ -780,7 +780,7 @@ mod tests {
         else {
             panic!("capability response");
         };
-        assert_eq!(capabilities.capabilities.len(), 2);
+        assert_eq!(capabilities.capabilities.len(), 4);
     }
 
     #[tokio::test]
