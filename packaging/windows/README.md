@@ -10,6 +10,8 @@ Helper MSI 必須使用包裝器安裝，讓目前 interactive user 的 SID 作�
 
 `build-release.ps1` 會 stage 六個 binary（含 `nettool-helper.exe`）；先使用 Tauri 建立 desktop MSI，再以 `build-helper-msi.ps1` 建立獨立 Helper MSI。兩者都應在發行前 Authenticode 簽章。
 
+發行前請在可還原的專用 Windows VM 執行 [Release Acceptance](RELEASE-ACCEPTANCE.md)。它會實測 MSI 安裝／移除、Helper service、兩種 portable 的邊界與 optional Safe Apply rollback；不可在日常使用的機器執行。
+
 GitHub Release 另提供兩種 portable ZIP：
 
 - `nettool-windows-x64-portable.zip`：不含 Helper、不要求 UAC；可建立、讀取、匯出 profile 與執行診斷／測試。套用 profile 或變更 Hosts 會明確提示需安裝 Helper。

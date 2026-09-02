@@ -1,0 +1,58 @@
+name: Windows release acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '已建立 prerelease 的版本 tag，例如 v0.1.4'
+        required: true
+        type: string
+      verify_signatures:
+        description: '驗證 Authenticode；僅適用已簽章 stable release'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    # 此 runner 必須是可還原快照的專用 Windows VM，並有獨立的非管理用測試 NIC。
+    runs-on: [self-hosted, windows, x64, nettool-release-acceptance]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+      - name: Download published Windows release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir release-assets --clobber --pattern 'NetTool_*.msi' --pattern 'NetToolHelper_*.msi' --pattern 'nettool-windows-x64-portable.zip' --pattern 'nettool-windows-x64-portable-uac.zip'
+      - name: Run non-mutating acceptance suite
+        shell: pwsh
+        env:
+          VERIFY_SIGNATURES: ${{ inputs.verify_signatures }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arguments = @(
+            '-ArtifactDirectory', 'release-assets',
+            '-AcceptIsolatedVmRisk',
+            '-ReportPath', 'release-assets/nettool-release-acceptance-report.json'
+          )
+          if ($env:VERIFY_SIGNATURES -eq 'true') { $arguments += '-VerifySignatures' }
+          & .\packaging\windows\test-release-acceptance.ps1 @arguments
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-release-acceptance-${{ inputs.release_tag }}
+          path: |
+            release-assets/nettool-release-acceptance-report.json
+            release-assets/nettool-release-acceptance-diagnostics/**
+          if-no-files-found: warn

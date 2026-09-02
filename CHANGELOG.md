@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增 Windows release acceptance harness 與手動 GitHub workflow：在可還原 self-hosted VM 驗證 MSI install/uninstall、SID-bound Helper service、一般／UAC portable 邊界、Agent/GUI health，並保留 JSON report 與 MSI logs；Safe Apply NIC rollback 只在明確指定非管理用測試 NIC 時執行。
+
 - Windows 新增獨立 `NetTool Helper` MSI：以原生 SCM service dispatcher 執行、由安裝器傳入允許的 Windows SID，桌面 MSI 保持不含特權 Helper。
 - Windows portable 分為一般版與 UAC 版：一般版保留 profile 管理及診斷功能並明確要求 Helper 才能套用；UAC 版只在 GUI Apply 時啟動一次性 SID-bound Helper，完成 Safe Apply 或 idle 後自行結束且不註冊 Service。
 

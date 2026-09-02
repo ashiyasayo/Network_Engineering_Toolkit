@@ -31,6 +31,8 @@ GitHub Actions 會在 Ubuntu、macOS、Windows runner 平行產生 AppImage/deb�
 
 所有 installer 都以固定 binary allowlist、staging directory 與 same-volume replacement 降低更新中斷風險。Helper 仍是獨立安裝步驟，不會因安裝 GUI 而取得 root 權限。
 
+Windows 發行後先在可還原的專用 VM 執行 [release acceptance runbook](windows/RELEASE-ACCEPTANCE.md)，再將 prerelease 提升為 stable。這套驗收會保留 MSI logs 與 JSON report，並將網路變更維持為預設關閉。
+
 ## Portable bundle
 
 Windows `nettool-windows-x64-portable.zip` 解壓縮後直接執行 `nettool-desktop.exe` 即可啟動桌面殼層；五個 binary 與 [portable 使用限制](PORTABLE-README.md) 必須留在同一個目錄。它不安裝 privileged Helper。`nettool-windows-x64-portable-uac.zip` 多附一次性 Helper，只有 GUI Apply 時才顯示 UAC，結束 Safe Apply 後不留駐；詳見 [UAC portable 說明](PORTABLE-UAC-README.md)。
