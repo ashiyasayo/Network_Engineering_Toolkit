@@ -23,3 +23,7 @@ Windows 發行已包含 Desktop MSI、獨立 Helper MSI、一般 portable 與 UA
 1. 專用 VM runner 以乾淨快照、互動式 Administrator 與雙 NIC 拓撲穩定執行。
 2. 至少完成一次 prerelease acceptance，含 optional Safe Apply deadline rollback。
 3. 將 workflow 納入 stable release environment 的必要 deployment protection，而不是讓 tag prerelease 依賴該 runner。
+
+## 執行排程
+
+目前決定暫不部署 runner。後續優先在開發者本機建立 Windows VM：主機只負責承載 VM，VM 以快照回復；使用一張 NAT 管理網卡與一張沒有預設路由的 Internal／Private 測試網卡。所有 MSI、Helper、UAC 與 Safe Apply 驗收都只在 VM 執行，不改動主機網路。完成 VM 基線後，才依本文件的前置條件註冊 self-hosted runner 並啟用 workflow。
