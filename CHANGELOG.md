@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.7
+
+- 修正 GitHub Release Windows artifact glob，確保一般 portable 與 UAC portable ZIP 都會上傳。
+
 ## 0.1.6
 
 - 修正 Windows Helper MSI 的內嵌 cabinet 名稱，使 WiX 在 GitHub Windows runner 的 MSI validation 可通過。

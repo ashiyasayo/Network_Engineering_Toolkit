@@ -88,7 +88,8 @@ jobs:
             bundles: msi
             files: |
               target/release/bundle/**/*.msi
-              target/release/bundle/**/*-portable.zip
+              target/release/bundle/**/nettool-windows-x64-portable.zip
+              target/release/bundle/**/nettool-windows-x64-portable-uac.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
