@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "nettool"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-action",
  "nettool-agent-client",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-action"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-error",
  "serde",
@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-agent"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-action",
  "nettool-agent-client",
@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-agent-client"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-agent-protocol",
  "nettool-error",
@@ -2159,18 +2159,18 @@ dependencies = [
 
 [[package]]
 name = "nettool-agent-protocol"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "prost",
 ]
 
 [[package]]
 name = "nettool-backend-af-xdp"
-version = "0.1.4"
+version = "0.1.5"
 
 [[package]]
 name = "nettool-backend-dpdk"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-benchmark",
  "nettool-domain",
@@ -2182,7 +2182,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-backend-pcap"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-error",
  "nettool-packet",
@@ -2190,11 +2190,11 @@ dependencies = [
 
 [[package]]
 name = "nettool-backend-rio"
-version = "0.1.4"
+version = "0.1.5"
 
 [[package]]
 name = "nettool-benchmark"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-error",
  "serde",
@@ -2204,7 +2204,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-dataplane"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-backend-dpdk",
  "nettool-backend-pcap",
@@ -2218,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-desktop"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "tauri",
  "tauri-build",
@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-domain"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -2234,7 +2234,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-dpdk-safe"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-dpdk-sys",
  "nettool-error",
@@ -2242,18 +2242,18 @@ dependencies = [
 
 [[package]]
 name = "nettool-dpdk-sys"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "nettool-error"
-version = "0.1.4"
+version = "0.1.5"
 
 [[package]]
 name = "nettool-gui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-action",
  "nettool-agent-client",
@@ -2268,7 +2268,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-helper"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-error",
  "nettool-helper-core",
@@ -2283,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-helper-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "getrandom 0.4.3",
  "nettool-domain",
@@ -2296,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-helper-protocol"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-domain",
  "serde",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-helper-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-error",
  "nettool-helper-protocol",
@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-identity"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "getrandom 0.4.3",
  "keyring",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-node"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "getrandom 0.4.3",
  "nettool-domain",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-node-protocol"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-error",
  "prost",
@@ -2359,7 +2359,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-packet"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-domain",
  "nettool-error",
@@ -2368,18 +2368,18 @@ dependencies = [
 
 [[package]]
 name = "nettool-platform-affinity"
-version = "0.1.4"
+version = "0.1.5"
 
 [[package]]
 name = "nettool-platform-auth"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "nettool-resource"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-error",
  "serde",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-speed"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-domain",
  "nettool-error",
@@ -2397,7 +2397,7 @@ dependencies = [
 
 [[package]]
 name = "nettool-storage"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nettool-benchmark",
  "nettool-error",

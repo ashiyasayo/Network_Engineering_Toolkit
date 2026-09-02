@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.5
+
 - Action API 新增 `server_only` metadata；GUI Action Console 與 CLI／架構文件將效能 benchmark、NUMA／Huge Page／高速 NIC、DPDK、AF_XDP、RIO 相關工作負載標示為「伺服器專用」，但不封鎖一般筆電進行唯讀探測或基本 socket 測試。
 
 - 新增 Windows release acceptance harness 與手動 GitHub workflow：在可還原 self-hosted VM 驗證 MSI install/uninstall、SID-bound Helper service、一般／UAC portable 邊界、Agent/GUI health，並保留 JSON report 與 MSI logs；Safe Apply NIC rollback 只在明確指定非管理用測試 NIC 時執行。
