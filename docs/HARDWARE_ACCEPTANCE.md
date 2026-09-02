@@ -2,6 +2,8 @@
 
 本文件是規格要求的實機驗收入口。Host unit tests、FFI syntax check 或 capability discovery 不足以把 backend 標示為可執行或 100GbE Certified；每一個 gate 都必須保存原始 command output、環境 snapshot、NIC/driver/firmware 資訊與結果 checksum。
 
+> **伺服器專用：** 本 runbook 的 AF_XDP、DPDK、RIO 與 100GbE 項目只適用於具相容高速 NIC、PCIe、driver control、NUMA／Huge Page 與隔離測試網路的伺服器或硬體實驗平台。一般筆電可執行唯讀 probe，但不得以其結果通過任何 gate 或作效能宣告。
+
 ## 共通前置
 
 - 使用乾淨的 Linux x86_64 runner、Windows x64 runner，以及兩端相同版本的 release binary。

@@ -39,9 +39,19 @@ CLI 與 GUI 都經由 Agent Action API 執行；需要特權的網路設定與 H
 
 ## 裝置定位
 
-一般筆電／工作站適合介面與網路狀態查詢、profile 管理、診斷、PCAP 離線分析，以及 `socket` backend 的基本測速。GUI 的 Action Console 與 CLI Reference 會以「伺服器專用」標示長時間效能驗收、NUMA／Huge Page／高速 NIC、DPDK、AF_XDP 與 RIO 相關工作負載。
-
 伺服器專用是使用情境標示，不是授權限制：筆電仍可查看 capability／preflight，但缺少對應硬體或 native backend 時會回報 unavailable，不能將結果用作效能或 100GbE 驗收。
+
+| 功能 | 一般個人電腦／筆電 | 伺服器或專用測試平台 |
+| --- | --- | --- |
+| 介面、IP、DNS、路由與系統狀態查詢 | 適合日常使用。 | 適合日常使用。 |
+| Profile 管理、匯出／讀取、診斷與 Hosts／網路設定 | 可用；變更系統設定仍需要平台 Helper 與權限。 | 可用；同樣需要平台 Helper 與權限。 |
+| 基本測速 | 可用 `socket` backend 驗證連通性與一般吞吐。 | 可作為基準，也可進行多 Node、長時間測試。 |
+| PCAP 離線分析 | 適合；不需要專用 NIC。 | 適合；可搭配長時間 capture。 |
+| `perf.*`、NUMA、Huge Page、PCIe／driver 資訊 | 可唯讀探測，結果僅供環境盤點。 | **伺服器專用**；用於 queue、CPU affinity 與硬體 preflight。 |
+| DPDK、AF_XDP、RIO、raw Ethernet、高速率測速 | 不作效能驗收；缺少 native backend 或硬體時會 fail closed。 | **伺服器專用**；需要相容 NIC、driver、native SDK 與隔離測試網路。 |
+| 100GbE benchmark／certification | 不支援驗收宣告。 | **伺服器專用**；需依 Hardware Acceptance Runbook 保存完整硬體證據。 |
+
+GUI 的 Action Console 與 CLI Reference 會以「伺服器專用」標示上述工作負載。
 
 更多命令與限制請參閱 [CLI Reference](docs/CLI_REFERENCE.md)；程序邊界與設計原因請參閱 [Architecture](docs/ARCHITECTURE.md)。
 

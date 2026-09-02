@@ -36,7 +36,7 @@ Protocol minor 1 新增 tag 46 `TestResultRequest`，以 128-bit session ID 可�
 
 ## Data plane
 
-Benchmark payload 不進入 Protobuf/TLS control plane。TCP、UDP 或 accelerated backend 使用 PrepareTest 動態配置的 data port 與 session-scoped authorization context。
+Benchmark payload 不進入 Protobuf/TLS control plane。TCP、UDP 或 accelerated backend 使用 PrepareTest 動態配置的 data port 與 session-scoped authorization context；accelerated backend（DPDK、AF_XDP、RIO）是**伺服器專用**工作負載，socket backend 則可用於一般裝置的基本測試。
 
 UDP sender 必須先配置 dynamic source port，並在 `PrepareTest.source_data_port` 提交。Receiver 將 source/destination IP+port、protocol、session ID、source Node ID、authorization tag 與 expiry 綁定為單一 authorization context；任何欄位不符都不可進入 speed engine。Authorization tag 使用固定時間內容比較，避免以一般字串早停比較處理 secret。
 
@@ -52,4 +52,4 @@ Unix Helper transport 使用 4-byte big-endian length + JSON payload，單一 fr
 
 具副作用 request 必須帶 operation ID。相同 operation ID 與相同 interface/state 的 Safe Apply 重送回傳既有 pending 結果；不同 request 重用 ID 回傳 `OPERATION.ID_CONFLICT`。確認時間到達 deadline 後不得再 confirm，必須進入 rollback。
 
-`nic.prepare_dpdk` 固定綁定 `vfio-pci`，先由 Helper 保存原 driver；`nic.restore_driver` 只接受 prepare operation ID 與同一 PCI address，wire request 不再接受 caller 指定 driver 名稱。`hugepage.prepare` 同樣先保存指定 NUMA/global sysfs count，`hugepage.release` 只依 prepare operation ID 還原。兩者都必須 write 後 read-back verify，且相同 request 重送維持冪等。
+`nic.prepare_dpdk` 固定綁定 `vfio-pci`，先由 Helper 保存原 driver；`nic.restore_driver` 只接受 prepare operation ID 與同一 PCI address，wire request 不再接受 caller 指定 driver 名稱。`hugepage.prepare` 同樣先保存指定 NUMA/global sysfs count，`hugepage.release` 只依 prepare operation ID 還原。兩者都必須 write 後 read-back verify，且相同 request 重送維持冪等。NIC binding 與 Huge Page 操作為**伺服器專用**；實際執行前必須保護 management NIC 並使用隔離測試環境。

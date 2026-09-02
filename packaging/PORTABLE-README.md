@@ -4,6 +4,8 @@
 
 Portable bundle 不會安裝、註冊或啟動 privileged Helper，也不會繞過 UAC。它仍可建立、讀取與匯出 profile，以及執行診斷與測試；GUI 在按下 Apply profile 時會明確提示「安裝 Helper MSI 或改用 portable UAC bundle」。因此下列操作在未設定 Helper 時會 fail closed：
 
+一般 portable 適合筆電的狀態查詢、profile 管理、診斷與基本 `socket` 測試；DPDK、AF_XDP、RIO、NUMA／Huge Page 與 100GbE 驗收屬於**伺服器專用**，即使 binary 可啟動也不應以一般裝置的結果作效能宣告。
+
 - `profile apply`、`profile confirm`、`profile rollback`
 - `ip set`、`ip dhcp`、`dns set`
 - `hosts list`、`hosts replace`、`hosts add`、`hosts remove`、`hosts enable`、`hosts disable`、`hosts backup`、`hosts restore`

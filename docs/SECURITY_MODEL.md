@@ -33,7 +33,7 @@ Runner 在交給平台執行器前會再次驗證 executable path、argv 長度�
 
 Linux root helper binary 與 systemd hardening assets 已提供。Service 啟動後先處理 helper-owned expired deadlines，運行中以一秒 watchdog 持續檢查；client exchange 限制兩秒，不能無限期卡住 rollback。Socket mode 為 `0660`；systemd state directory 為 `0700`，並以 `ProtectSystem=strict` 及 `ReadWritePaths` 限制寫入位置。安裝程式仍必須填入 exact Agent UID、建立 group membership，且應在目標 distribution 驗證 sandbox 與 NetworkManager 相容性。
 
-Linux NIC handler 不允許 wire request 指定任意 restore driver；原 driver 只從 Helper 在 unbind 前持久化的 snapshot 取得，PCI address 與 prepare operation 必須完全相符。Huge Page handler 同樣以 helper-owned previous count 還原，並限制單次請求總容量不超過 1 TiB。兩者寫入後都讀回驗證，snapshot rename 後同步 parent directory。
+Linux NIC handler 不允許 wire request 指定任意 restore driver；原 driver 只從 Helper 在 unbind 前持久化的 snapshot 取得，PCI address 與 prepare operation 必須完全相符。Huge Page handler 同樣以 helper-owned previous count 還原，並限制單次請求總容量不超過 1 TiB。兩者寫入後都讀回驗證，snapshot rename 後同步 parent directory。這些 NIC binding 與 Huge Page 操作屬於**伺服器專用**工作負載，必須在隔離的測試 NIC 上執行，不能套用到一般筆電或 management NIC。
 
 目前尚未完成的安全邊界包括 macOS/Windows 正式 installer 與 privileged service 整合；Linux 已提供 root-only helper installer。Node pairing 現在要求 CLI/GUI 明確提供 out-of-band fingerprint confirmation，Storage 會在 trust transaction 前拒絕未確認 request。macOS network executor 已接入 Unix helper，但仍需在 macOS 實機完成 privileged service/ACL 與 end-to-end 測試。Windows Named Pipe helper 已接入 token SID authentication、`netsh` executor 與 Safe Apply，但仍需在 Windows runner/VM 完成實機 ACL 與 end-to-end 測試後才能標示為 production-ready。
 

@@ -13,6 +13,6 @@
 
 Socket 由 root service 建立為 `/run/nettool/helper.sock`、mode `0660`。Group permission 只允許建立連線；Helper 仍會從 kernel 取得 peer UID，只有與 `NETTOOL_AGENT_UID` 完全相同的 caller 才能通過授權。
 
-State 與 snapshots 位於 `/var/lib/nettool/helper`、mode `0700`。Unit 僅開放 `/etc/hosts`、state/runtime directory 與 PCI/Huge Page 所需的明確 sysfs paths 寫入。變更 UID 後必須重新啟動 Helper，並重新啟動 Agent 以取得新的 group membership。
+State 與 snapshots 位於 `/var/lib/nettool/helper`、mode `0700`。Unit 僅開放 `/etc/hosts`、state/runtime directory 與 PCI/Huge Page 所需的明確 sysfs paths 寫入；PCI binding 與 Huge Page 是**伺服器專用**功能，必須使用隔離測試 NIC，不能影響 management NIC。變更 UID 後必須重新啟動 Helper，並重新啟動 Agent 以取得新的 group membership。
 
 目前 unit 只適用使用 NetworkManager 且 `/usr/bin/nmcli` 存在的 Linux Ethernet 主機。安裝前應在目標 distribution 的隔離測試機驗證 package path、systemd sandbox 與 NetworkManager 版本。
