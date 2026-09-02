@@ -165,6 +165,7 @@ async fn route(request: HttpRequest) -> HttpResponse {
                         "name": descriptor.name,
                         "permission": format!("{:?}", descriptor.permission),
                         "idempotent": descriptor.idempotent,
+                        "server_only": descriptor.is_server_only(),
                         "cli": descriptor.cli,
                     })
                 })
@@ -395,11 +396,9 @@ mod tests {
         })
         .await;
         assert_eq!(actions.status, "200 OK");
-        assert!(
-            String::from_utf8(actions.body)
-                .expect("JSON")
-                .contains("system.health")
-        );
+        let actions = String::from_utf8(actions.body).expect("JSON");
+        assert!(actions.contains("system.health"));
+        assert!(actions.contains("\"server_only\":true"));
     }
 
     #[test]
@@ -409,6 +408,7 @@ mod tests {
         assert!(super::INDEX_HTML.contains("profile.apply"));
         assert!(super::INDEX_HTML.contains("/api/portable-helper"));
         assert!(super::INDEX_HTML.contains("Create profile"));
+        assert!(super::INDEX_HTML.contains("伺服器專用"));
     }
 
     #[tokio::test]

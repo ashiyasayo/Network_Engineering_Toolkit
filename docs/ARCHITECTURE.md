@@ -125,6 +125,7 @@ sequenceDiagram
 - 預設 build 不宣稱 DPDK、RIO 或 accelerated speed executor 可用；`native-dpdk` 與 `pkg-config libdpdk` 是 DPDK native path 的必要條件。
 - Linux AF_XDP 的 implementation 可編譯不代表 zero-copy driver、interface 或 queue preflight 已通過；RIO 同樣必須同時符合 Windows platform 與 implementation gate。
 - `100G Certified` 需要完整 hardware evidence、核准 policy 與 A–J gates 全部通過；未完成真實硬體 POC 時最高只能呈現較低的驗證狀態。
+- Action API 對 `perf.*` 回傳 `server_only: true`，GUI 會標示「伺服器專用」；此欄位只描述高速 NIC、NUMA、Huge Page 與 native backend 的驗收情境，不會把一般裝置的唯讀 capability probe 當成錯誤或權限拒絕。
 
 ```mermaid
 flowchart TB

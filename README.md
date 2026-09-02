@@ -37,6 +37,12 @@ cargo run -p nettool-desktop
 
 CLI 與 GUI 都經由 Agent Action API 執行；需要特權的網路設定與 Hosts 操作則交由 authenticated Helper。DPDK、AF_XDP 與 RIO 的 capability、implementation 和 runtime preflight 分開回報，預設 build 不會把未驗證的硬體能力標示為可用。未完成真實硬體 POC 前，任何結果都不標示為 `100G Certified`。
 
+## 裝置定位
+
+一般筆電／工作站適合介面與網路狀態查詢、profile 管理、診斷、PCAP 離線分析，以及 `socket` backend 的基本測速。GUI 的 Action Console 與 CLI Reference 會以「伺服器專用」標示長時間效能驗收、NUMA／Huge Page／高速 NIC、DPDK、AF_XDP 與 RIO 相關工作負載。
+
+伺服器專用是使用情境標示，不是授權限制：筆電仍可查看 capability／preflight，但缺少對應硬體或 native backend 時會回報 unavailable，不能將結果用作效能或 100GbE 驗收。
+
 更多命令與限制請參閱 [CLI Reference](docs/CLI_REFERENCE.md)；程序邊界與設計原因請參閱 [Architecture](docs/ARCHITECTURE.md)。
 
 ## 授權

@@ -56,6 +56,10 @@ Dashboard 的 Action Console 只列出 `ActionRegistry` 已註冊項目；payloa
 
 透過 Agent 執行資料平面環境探測。上述命令皆可附加 `--output json`。
 
+## 裝置分類
+
+「伺服器專用」表示該工作負載需要長時間測試或高速 NIC、NUMA、Huge Page、PCIe／driver control 與 native backend 才有驗收意義；它不是權限封鎖。一般筆電可使用介面查詢、profile 管理、診斷、PCAP 離線分析及 `socket` backend 的基本測速，也可執行唯讀 probe 了解缺少的 capability。
+
 ## `nettool speed run`
 
 ```bash
@@ -65,6 +69,8 @@ nettool speed run <node> [--protocol tcp|udp|raw] [--backend socket|native|dpdk|
 時間單位接受 `ms`、`s`、`m`，rate 接受十進位 `K`、`M`、`G`、`T`。Raw Ethernet 必須使用 DPDK 且 frame size 至少 64 bytes；CPU affinity 只允許 accelerated backend。Agent 會先以 stable ID 或精確名稱解析仍為 trusted 且具有 paired certificate、TLS server name 與 control socket 的 Node，未配對回傳 `NODE.NOT_PAIRED`。socket upload、TCP/UDP download 與 TCP/UDP bidirectional 會實際完成 mutual TLS、Hello、capability、雙端 endpoint Prepare、共同 scheduled Start、並行 authorized sender/receiver 與 ResultQuery；raw 或未附著的 accelerated executor 會回報 `ACTION.UNSUPPORTED`，不產生虛假結果或遺留 remote reservation。
 
 目前 socket executor 不支援 `--auto-tune`、`--latency-under-load` 或 socket backend 的 `--numa`；這些選項會明確回報 unsupported/invalid，不會被靜默忽略。
+
+`--backend socket` 適合一般筆電的基本連通與吞吐測試；`native`、`dpdk`、`af_xdp`、`rio`、高 rate、NUMA affinity 與 raw Ethernet 屬於**伺服器專用**情境，不應以筆電結果作硬體效能驗收。
 
 Node control server 預設不監聽網路。設定 Agent 環境變數 `NETTOOL_CONTROL_LISTEN=<IP>:<port>` 後才啟動 mutual TLS listener；值必須是明確的 IP socket address，例如 `192.0.2.10:49152` 或 `[2001:db8::10]:49152`。每條新連線都會從最新 trusted Node registry 建立 verifier；空 registry 的連線會被拒絕，但完成 pairing 後不需重啟 Agent。
 
@@ -76,21 +82,21 @@ nettool speed cancel <session-id>
 
 Agent 會依 SQLite session record 找到 paired remote Node，透過 mutual TLS 送出 idempotent `StopTest`，確認遠端回覆 `CANCELED` 後將本機 session 保存為 canceled。取消未知、未配對或已完成的 session 會回傳明確錯誤。
 
-## `nettool perf topology`
+## `nettool perf topology`（伺服器專用）
 
 透過 Agent 顯示 CPU logical count、NUMA、Huge Pages，以及每張 NIC 的 IP addresses、bus type、PCI address、link speed、NUMA node、RX/TX queues 與 driver。`bus_type` 僅接受 `usb`、`pci`、`unknown`；無法驗證的 PCI address 保留 `null` 並附 warning，不填入推測值。
 
-## `nettool perf backend`
+## `nettool perf backend`（伺服器專用）
 
 列出 `pcap`、`af_xdp`、`dpdk` 與 `rio` 的 availability。`available` 必須同時符合 implementation 與對應 platform/runtime gate；kernel/platform/runtime capability 以不同欄位呈現，不能把找到 DPDK runtime 或 AF_XDP kernel API 誤解為 zero-copy preflight 已通過。
 
 兩個命令皆支援 `--output json`。
 
-## `nettool perf profile list`
+## `nettool perf profile list`（伺服器專用）
 
 列出內建 benchmark plans 與 `certification_policy_configured`。`100g-cert` 目前包含完整 packet/flow/duration plan，但在真實硬體 POC 固定門檻前 policy 為 false。
 
-## `nettool perf benchmark --profile <id>`
+## `nettool perf benchmark --profile <id>`（伺服器專用）
 
 透過 Agent 驗證 profile 並啟動 benchmark orchestration。CLI 會把非冪等 request ID 同時作 operation ID。現階段 accelerated hardware phase executor 尚未連結，因此有效 profile 會明確回傳 `DATAPLANE.BACKEND_NOT_BUILT`，不產生模擬 throughput 或虛假成功結果。
 
@@ -102,7 +108,7 @@ Agent 會依 SQLite session record 找到 paired remote Node，透過 mutual TLS
 
 使用 `--output json` 取得 schema `1.0` 的機器可讀輸出。標準輸出只包含成功結果；錯誤以 JSON envelope 寫到標準錯誤並回傳 exit code 2。
 
-## `nettool-dataplane rx`
+## `nettool-dataplane rx`（伺服器專用）
 
 ```bash
 nettool-dataplane rx --backend dpdk --interface <pci-address> [--output json]
@@ -130,11 +136,13 @@ Node 配對可使用 `nettool node pair --id <id> --name <name> --address <ip:po
 
 封包統計可使用 `nettool packet stats [--interface <id>]` 讀取 Linux sysfs counters；目前連線可使用 `nettool packet connections [--protocol tcp|udp]` 讀取 Linux procfs endpoint tables（process/PID/traffic 無法由 endpoint table 證明時保持 `null`）；封包離線分析可使用 `nettool packet analyze --input <capture> [--sample-one-in <n>]`。Agent 使用 bounded PCAP/PCAPNG backend 與 blocking worker 執行，不會把 sampled 結果標示成 full coverage；非 Linux 平台的 packet stats/connections 會明確回報 unsupported。
 
-Native DPDK build 可使用 `nettool-dataplane tx --backend dpdk --interface <pci-address> --frame-size <64..9018> --packets <n>` 執行 bounded raw TX template bursts。命令先跑最新 hardware preflight，並在可用時回傳 PMD `rte_eth_stats` hardware counters；未以 native DPDK SDK 建置時回傳 `DATAPLANE.BACKEND_NOT_BUILT`，不產生模擬傳輸數字。
+**伺服器專用：** Native DPDK build 可使用 `nettool-dataplane tx --backend dpdk --interface <pci-address> --frame-size <64..9018> --packets <n>` 執行 bounded raw TX template bursts。命令先跑最新 hardware preflight，並在可用時回傳 PMD `rte_eth_stats` hardware counters；未以 native DPDK SDK 建置時回傳 `DATAPLANE.BACKEND_NOT_BUILT`，不產生模擬傳輸數字。
 
-Native DPDK build 亦可使用 `nettool-dataplane capture --backend dpdk --interface <pci-address> --output <directory> --bursts <n> [--protocol <tcp|udp|icmp|icmpv6|number>] [--source-ip <ip>] [--destination-ip <ip>] [--source-port <port>] [--destination-port <port>]` 執行 bounded RX capture。命令以 non-blocking bounded queue 將符合 filter 的 native RX mbuf 複製至旋轉 PCAPNG writer（單檔 1 GiB、60 秒、最多 4 檔），完成指定 burst 後輸出分析統計與 capture 目錄；未連結 SDK 時同樣回傳 `DATAPLANE.BACKEND_NOT_BUILT`，不宣稱 lossless 或 line-rate。
+**伺服器專用：** Native DPDK build 亦可使用 `nettool-dataplane capture --backend dpdk --interface <pci-address> --output <directory> --bursts <n> [--protocol <tcp|udp|icmp|icmpv6|number>] [--source-ip <ip>] [--destination-ip <ip>] [--source-port <port>] [--destination-port <port>]` 執行 bounded RX capture。命令以 non-blocking bounded queue 將符合 filter 的 native RX mbuf 複製至旋轉 PCAPNG writer（單檔 1 GiB、60 秒、最多 4 檔），完成指定 burst 後輸出分析統計與 capture 目錄；未連結 SDK 時同樣回傳 `DATAPLANE.BACKEND_NOT_BUILT`，不宣稱 lossless 或 line-rate。
 
 Agent 管理的 capture lifecycle 可使用 `nettool packet capture start --interface <id> --output <directory> --bursts <n> [--backend dpdk] [--protocol ...] [--source-ip ...] [--destination-ip ...] [--source-port ...] [--destination-port ...]`，回傳持久化 session ID；以 `nettool packet capture stop <session-id>` 停止仍由 Agent 擁有的 worker。Agent 會回收正常結束的 dataplane process 並保存 `packet_session` 終態；沒有可執行的 native dataplane binary 時明確回傳 `DATAPLANE.BACKEND_NOT_BUILT`。
+
+上述 capture lifecycle 只有指定 `--backend dpdk` 時屬於**伺服器專用**；不帶該 backend 的檔案管理與離線分析仍可在一般裝置使用。
 
 介面查詢可使用 `nettool interface list`、`nettool interface show <name-or-id>` 與 `nettool interface refresh`；輸出包含 `ip_addresses`、`bus_type`、driver、link speed、RX/TX queues 與 NUMA node。Linux 讀取 sysfs，只有合法 PCI BDF 才填入 `pci_address`，USB 或無法判定的 path 會回傳 `bus_type: "unknown"` 或 `"usb"` 並保留 PCI address 為 `null`。macOS 仍只列舉介面名稱；Windows 使用固定 PowerShell UTF-8 JSON `Get-NetAdapter`，並以 `ifIndex` 關聯該介面的 IP 位址，保留 IPv6 link-local 的 scope suffix。這兩個平台目前不從介面列舉結果推論 USB bus，無法由平台 API 證明的欄位會保持 `null`；未支援 IP 探測的平台 `ip_addresses` 為空陣列。
 

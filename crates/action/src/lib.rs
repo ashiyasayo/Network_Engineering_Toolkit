@@ -49,6 +49,20 @@ pub struct ActionDescriptor {
     pub cli: &'static str,
 }
 
+impl ActionDescriptor {
+    /// 是否屬於需在伺服器級硬體完成驗收的工作負載。
+    ///
+    /// 此標示是操作提示而非授權機制：一般裝置仍可執行唯讀探測，
+    /// 但不應將缺少 NUMA、高速 NIC 或 native backend 的結果當成效能驗證。
+    #[must_use]
+    pub fn is_server_only(&self) -> bool {
+        matches!(
+            self.name,
+            "perf.topology" | "perf.backend" | "perf.profile.list" | "perf.benchmark"
+        )
+    }
+}
+
 /// 集中管理 GUI、CLI 與 Agent 可執行的 Action。
 pub struct ActionRegistry;
 
@@ -375,5 +389,24 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), original_length);
+    }
+
+    #[test]
+    fn marks_hardware_benchmark_actions_as_server_only() {
+        assert!(
+            ActionRegistry::find("perf.benchmark")
+                .expect("registered benchmark action")
+                .is_server_only()
+        );
+        assert!(
+            ActionRegistry::find("perf.backend")
+                .expect("registered backend action")
+                .is_server_only()
+        );
+        assert!(
+            !ActionRegistry::find("system.health")
+                .expect("registered health action")
+                .is_server_only()
+        );
     }
 }
