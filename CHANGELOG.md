@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-## 0.1.5
+## 0.1.6
+
+- 修正 Windows Helper MSI 的內嵌 cabinet 名稱，使 WiX 在 GitHub Windows runner 的 MSI validation 可通過。
 
 - Action API 新增 `server_only` metadata；GUI Action Console 與 CLI／架構文件將效能 benchmark、NUMA／Huge Page／高速 NIC、DPDK、AF_XDP、RIO 相關工作負載標示為「伺服器專用」，但不封鎖一般筆電進行唯讀探測或基本 socket 測試。
 

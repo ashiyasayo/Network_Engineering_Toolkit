@@ -8,7 +8,7 @@
            UpgradeCode="8d4a21ef-8a10-4fa4-9774-9ef457e6c52f">
     <Package Id="*" InstallerVersion="450" Compressed="yes" InstallScope="perMachine" />
     <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="no" DowngradeErrorMessage="A newer NetTool Helper version is already installed." />
-    <Media Id="1" Cabinet="nettool-helper.cab" EmbedCab="yes" />
+    <Media Id="1" Cabinet="helper.cab" EmbedCab="yes" />
 
     <Property Id="NETTOOL_ALLOWED_SID" Secure="yes" />
     <Condition Message="NETTOOL_ALLOWED_SID is required. Run the documented install-helper.ps1 wrapper.">
