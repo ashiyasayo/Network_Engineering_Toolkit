@@ -6,7 +6,7 @@
 
 | 規格項目 | 適用設備 | 主要實作 | 自動化證據 | 狀態 |
 | --- | --- | --- | --- | --- |
-| Agent/GUI/CLI typed Action | 一般裝置 | `crates/action`、`apps/agent`、`apps/cli`、`apps/gui` | workspace tests、Action registry uniqueness、GUI HTTP security tests | Action 核心完成；GUI 提供查詢、Profiles／Node 表單與 Console，實機 GUI 待驗 |
+| Agent/GUI/CLI typed Action | 一般裝置 | `crates/action`、`apps/agent`、`apps/cli`、`apps/gui` | workspace tests、Action registry uniqueness、GUI HTTP security 與 JS Safe Apply lifecycle tests | Action 核心完成；GUI 提供查詢、Profiles／Node 表單與 Console，實機 GUI 待驗 |
 | Native desktop shell / installer | 一般裝置 | `apps/desktop`、`packaging/{macos,windows,linux}`、`.github/workflows/release.yml` | Tauri config、固定 allowlist staging scripts、portable bundle smoke test、stable signing gate | 殼層、staging、portable ZIP 與簽章 gate 完成；外部憑證實際執行、notarization、平台實機待驗 |
 | Profile / Hosts / Safe Apply | 一般裝置（需 Helper） | `crates/storage`、`crates/helper-core`、`crates/helper-server` | storage/helper tests、rollback/idempotency tests | 已完成（平台實機待驗） |
 | Node mTLS / trust reload | 一般裝置 | `crates/node`、`crates/storage`、`apps/agent` | Node protocol/Agent integration tests | 已完成 |
@@ -38,6 +38,7 @@
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --quiet
+node --test apps/gui/tests/ui.test.mjs
 cargo test --workspace -- --ignored  # 需允許 dynamic socket bind 的受控 runner
 ```
 

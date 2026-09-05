@@ -59,6 +59,8 @@ struct ActionCall {
     action: String,
     #[serde(default)]
     payload: Value,
+    #[serde(default)]
+    operation_id: Option<String>,
 }
 
 #[tokio::main]
@@ -316,16 +318,32 @@ fn encode_action(call: ActionCall, request_id: &str) -> Result<ActionRequest, Ht
             json!({"success":false,"error":{"code":"ACTION.UNKNOWN","message":"action is not registered"}}),
         ));
     };
+    if call.operation_id.as_ref().is_some_and(|id| {
+        id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    }) {
+        return Err(gui_error(
+            "400 Bad Request",
+            "GUI.INVALID_OPERATION_ID",
+            "operation ID must be 1–128 ASCII letters, digits, hyphens or underscores",
+        ));
+    }
     let payload_json = serde_json::to_vec(&call.payload)
         .map_err(|error| gui_error("400 Bad Request", "GUI.INVALID_JSON", &error.to_string()))?;
     Ok(ActionRequest {
         action: descriptor.name.to_owned(),
         payload_json,
-        operation_id: if descriptor.idempotent {
-            String::new()
-        } else {
-            request_id.to_owned()
-        },
+        // Safe Apply 雖可冪等重送，仍須保留 caller 指定的 transaction identity。
+        operation_id: call.operation_id.unwrap_or_else(|| {
+            if descriptor.idempotent {
+                String::new()
+            } else {
+                request_id.to_owned()
+            }
+        }),
         dry_run: false,
     })
 }
@@ -382,12 +400,18 @@ async fn execute_action(call: ActionCall) -> HttpResponse {
 }
 
 fn start_portable_helper() -> HttpResponse {
-    match std::env::var("NETTOOL_HELPER_MODE").as_deref() {
-        Ok("external") => json_response(
+    let mode = std::env::var("NETTOOL_HELPER_MODE").ok().or_else(|| {
+        std::env::var("NETTOOL_HELPER_SOCKET")
+            .ok()
+            .filter(|socket| !socket.trim().is_empty())
+            .map(|_| "external".to_owned())
+    });
+    match mode.as_deref() {
+        Some("external") => json_response(
             "200 OK",
             json!({"success":true,"mode":"external","message":"configured Helper will be used"}),
         ),
-        Ok("portable-uac") => match portable_helper_arguments() {
+        Some("portable-uac") => match portable_helper_arguments() {
             Ok((binary, arguments)) => {
                 match nettool_platform_auth::launch_elevated(&binary, &arguments) {
                     Ok(()) => json_response(
@@ -658,4 +682,38 @@ mod tests {
         assert!(read_http_request(&mut raw.as_bytes()).await.is_err());
     }
 
+    #[tokio::test]
+    async fn invalid_operation_id_never_reaches_agent() {
+        let response = execute_action(ActionCall {
+            action: "profile.apply".into(),
+            payload: json!({}),
+            operation_id: Some("invalid/id".into()),
+        })
+        .await;
+        assert_eq!(response.status, "400 Bad Request");
+        assert!(
+            String::from_utf8(response.body)
+                .expect("JSON")
+                .contains("GUI.INVALID_OPERATION_ID")
+        );
+    }
+
+    #[test]
+    fn safe_apply_operation_id_survives_gui_to_agent_encoding() {
+        assert!(
+            ActionRegistry::find("profile.apply")
+                .expect("registered")
+                .idempotent
+        );
+        for request_id in ["http-first", "http-retry"] {
+            let wire = encode_action(ActionCall {
+                action: "profile.apply".into(),
+                payload: json!({"id_or_name":"office","interface_id":"Ethernet","confirm_timeout_seconds":60}),
+                operation_id: Some("gui-same-transaction".into()),
+            }, request_id).unwrap_or_else(|_| panic!("valid action"));
+            assert_eq!(wire.operation_id, "gui-same-transaction");
+            assert_eq!(wire.action, "profile.apply");
+            assert!(!wire.dry_run);
+        }
+    }
 }

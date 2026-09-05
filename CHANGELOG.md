@@ -3,6 +3,8 @@
 ## Unreleased
 
 - 修正 localhost GUI 的跨來源與 HTML 注入邊界：採用 httparse、精確 Host／Origin 與隨機 CSRF token 驗證、JSON Content-Type、CSP、文字輸出，以及有界連線與 HTTP I/O timeout；desktop health check 同步帶上實際連接埠。
+- GUI Profiles 補上 Safe Apply Confirm／Rollback、期限倒數與分頁重新整理恢復；失聯時保留操作 ID，UAC transport 重試沿用同一 ID，逾期不誤報回復成功。獨立 GUI 支援已設定的外部 Helper。
+- GUI 查詢頁改以 Speed history、Packet connections、Environment 命名，合併重複的 Logs 入口；新增 HTTP 安全與前端操作回歸測試。
 
 ## 0.1.7
 

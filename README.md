@@ -37,7 +37,7 @@ cargo run -p nettool-desktop
 
 CLI 與 GUI 都經由 Agent Action API 執行；需要特權的網路設定與 Hosts 操作則交由 authenticated Helper。DPDK、AF_XDP 與 RIO 的 capability、implementation 和 runtime preflight 分開回報，預設 build 不會把未驗證的硬體能力標示為可用。未完成真實硬體 POC 前，任何結果都不標示為 `100G Certified`。
 
-請使用 listener 的數字 IP 與連接埠開啟 GUI，例如 `http://127.0.0.1:8765`，不使用 `localhost` 別名。
+GUI Profiles 提供 Apply、Confirm、Rollback 與確認倒數；重新整理同一分頁仍保留待確認操作。請使用 listener 的數字 IP 與連接埠開啟 GUI，例如 `http://127.0.0.1:8765`，不使用 `localhost` 別名。Speed history、Packet connections 與 Environment 是查詢頁面；詳細操作使用 CLI 或 Action Console。
 
 ## 裝置定位
 

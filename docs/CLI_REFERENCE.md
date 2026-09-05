@@ -44,7 +44,11 @@ cargo run -p nettool-gui
 
 Dashboard 的 Action Console 只列出 `ActionRegistry` 已註冊項目；payload 必須是 JSON，未知 action（包含任意 shell/command）會在 Agent 連線前拒絕。
 
-GUI 僅接受 listener 的數字 IP 與實際連接埠作為 Host；例如使用 `127.0.0.1:8765`，不能改用 `localhost:8765`。POST 必須包含相符的 Origin、首頁提供的 `X-NetTool-CSRF` token 與 `application/json` Content-Type；自動化操作應優先使用 CLI／Agent IPC。
+Profiles 套用成功後，上方 Safe Apply 區塊提供 **Confirm（保留設定）**、**Rollback（回復設定）** 與 Helper 回傳期限的倒數。切換頁面或重新整理同一分頁不會丟失 operation ID；關閉分頁後仍由 Helper 負責 deadline rollback。逾期只表示不能再確認，GUI 不會自行宣稱網路已回復；應查核介面狀態。回應遺失時保留操作供回復，UAC Helper 尚未就緒的 transport 重試會沿用同一個 operation ID。
+
+導覽改以實際內容命名：`Speed history` 顯示測速歷史、`Packet connections` 顯示連線、`Environment` 顯示環境探測；原本重複顯示測速歷史的 Logs 入口已合併。這些查詢不代表完整日誌檢視器或設定編輯器。
+
+GUI 僅接受 listener 的數字 IP 與實際連接埠作為 Host；例如使用 `127.0.0.1:8765`，不能改用 `localhost:8765`。POST 必須包含相符的 Origin、首頁提供的 `X-NetTool-CSRF` token 與 `application/json` Content-Type；自動化操作應優先使用 CLI／Agent IPC。獨立啟動 GUI 時若已設定 `NETTOOL_HELPER_SOCKET`，會使用該外部 Helper。
 
 ## `nettool health`
 

@@ -16,7 +16,7 @@ assert.ok(token, 'server must inject a random token');
 const script = await fetch(new URL('/app.js', base));
 assert.equal(script.status, 200);
 assert.match(script.headers.get('content-type'), /javascript/);
-assert.match(await script.text(), /showResult/);
+assert.match(await script.text(), /finishSafeApply/);
 
 const headers = {
     Origin: base.origin,
