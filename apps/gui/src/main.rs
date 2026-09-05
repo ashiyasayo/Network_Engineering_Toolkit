@@ -9,14 +9,16 @@ use nettool_agent_protocol::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::convert::Infallible;
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 
 const MAX_HTTP_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
@@ -26,8 +28,33 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 static HEALTH_PATH: OnceLock<String> = OnceLock::new();
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
+const APP_JS: &str = include_str!("../ui/app.js");
+const HTTP_IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+type HttpError = Box<dyn std::error::Error + Send + Sync>;
+
+struct GuiSecurity {
+    authority: String,
+    csrf_token: String,
+}
+
+impl GuiSecurity {
+    fn new(address: SocketAddr) -> Result<Self, getrandom::Error> {
+        let mut bytes = [0_u8; 32];
+        getrandom::fill(&mut bytes)?;
+        let mut csrf_token = String::with_capacity(64);
+        for byte in bytes {
+            write!(csrf_token, "{byte:02x}").expect("writing into String cannot fail");
+        }
+        Ok(Self {
+            authority: address.to_string(),
+            csrf_token,
+        })
+    }
+}
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ActionCall {
     action: String,
     #[serde(default)]
@@ -44,13 +71,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("NETTOOL_GUI_LISTEN must bind to a loopback address".into());
     }
     let listener = TcpListener::bind(address).await?;
+    let security = Arc::new(
+        GuiSecurity::new(listener.local_addr()?)
+            .map_err(|error| std::io::Error::other(error.to_string()))?,
+    );
+    let connections = Arc::new(Semaphore::new(64));
     let _ = HEALTH_PATH
         .set(std::env::var("NETTOOL_GUI_HEALTH_PATH").unwrap_or_else(|_| "/health".to_owned()));
     tracing::info!(operation = "gui.listen", peer = %address, "nettool-gui listening");
     loop {
         let (stream, _) = listener.accept().await?;
+        let Ok(permit) = connections.clone().try_acquire_owned() else {
+            drop(stream);
+            continue;
+        };
+        let security = security.clone();
         tokio::spawn(async move {
-            if let Err(error) = serve_connection(stream).await {
+            let _permit = permit;
+            if let Err(error) = serve_connection(stream, &security).await {
                 tracing::error!(operation = "gui.request", error = %error, "GUI request failed");
             }
         });
@@ -66,79 +104,152 @@ fn init_logging() {
         .try_init();
 }
 
-async fn serve_connection(
-    mut stream: TcpStream,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let request = read_http_request(&mut stream).await?;
-    let response = route(request).await;
-    write_http_response(&mut stream, response).await?;
+async fn serve_connection(mut stream: TcpStream, security: &GuiSecurity) -> Result<(), HttpError> {
+    let response = match tokio::time::timeout(HTTP_IO_TIMEOUT, read_http_request(&mut stream)).await
+    {
+        Ok(Ok(request)) => route(request, security).await,
+        Ok(Err(_)) => gui_error(
+            "400 Bad Request",
+            "GUI.INVALID_HTTP",
+            "invalid or oversized HTTP request",
+        ),
+        Err(_) => gui_error(
+            "408 Request Timeout",
+            "GUI.REQUEST_TIMEOUT",
+            "HTTP request timed out",
+        ),
+    };
+    tokio::time::timeout(HTTP_IO_TIMEOUT, write_http_response(&mut stream, response)).await??;
     Ok(())
 }
 
+#[derive(Debug)]
 struct HttpRequest {
     method: String,
     path: String,
+    headers: BTreeMap<String, String>,
     body: Vec<u8>,
 }
 
-async fn read_http_request(
-    stream: &mut TcpStream,
-) -> Result<HttpRequest, Box<dyn std::error::Error + Send + Sync>> {
+impl HttpRequest {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).map(String::as_str)
+    }
+}
+
+// 只接受 GUI 使用的單一、定長 request；協定語法交由 httparse 處理。
+fn parse_http_head(bytes: &[u8]) -> Result<Option<(HttpRequest, usize, usize)>, HttpError> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut parsed = httparse::Request::new(&mut headers);
+    let httparse::Status::Complete(header_end) = parsed.parse(bytes)? else {
+        if bytes.len() > MAX_HTTP_HEADER_BYTES {
+            return Err("HTTP headers exceed bound".into());
+        }
+        return Ok(None);
+    };
+    if header_end > MAX_HTTP_HEADER_BYTES || parsed.version != Some(1) {
+        return Err("HTTP headers exceed bound or version is unsupported".into());
+    }
+    let mut values = BTreeMap::new();
+    for header in parsed.headers.iter() {
+        let name = header.name.to_ascii_lowercase();
+        let value = std::str::from_utf8(header.value)?.trim().to_owned();
+        if values.insert(name, value).is_some() {
+            return Err("duplicate HTTP header".into());
+        }
+    }
+    if values.contains_key("transfer-encoding") {
+        return Err("Transfer-Encoding is unsupported".into());
+    }
+    let length = values.get("content-length").map_or(Ok(0), |value| {
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err("Content-Length is invalid");
+        }
+        value
+            .parse::<usize>()
+            .map_err(|_| "Content-Length is invalid")
+    })?;
+    if length > MAX_HTTP_BODY_BYTES || header_end + length > MAX_HTTP_REQUEST_BYTES {
+        return Err("HTTP body exceeds bound".into());
+    }
+    Ok(Some((
+        HttpRequest {
+            method: parsed.method.ok_or("HTTP method is missing")?.to_owned(),
+            path: parsed.path.ok_or("HTTP path is missing")?.to_owned(),
+            headers: values,
+            body: Vec::new(),
+        },
+        header_end,
+        length,
+    )))
+}
+
+async fn read_http_request<S: AsyncRead + Unpin>(stream: &mut S) -> Result<HttpRequest, HttpError> {
     let mut bytes = Vec::with_capacity(4096);
-    let header_end = loop {
+    let (mut request, header_end, length) = loop {
+        if let Some(head) = parse_http_head(&bytes)? {
+            break head;
+        }
         let mut chunk = [0_u8; 2048];
         let read = stream.read(&mut chunk).await?;
         if read == 0 {
             return Err("HTTP request ended before headers".into());
         }
         bytes.extend_from_slice(&chunk[..read]);
-        if bytes.len() > MAX_HTTP_HEADER_BYTES {
-            return Err("HTTP headers exceed bound".into());
-        }
-        if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            break position + 4;
-        }
     };
-    let header_text = std::str::from_utf8(&bytes[..header_end])?;
-    let mut lines = header_text.split("\r\n");
-    let request_line = lines.next().ok_or("HTTP request line is missing")?;
-    let mut request_parts = request_line.split_whitespace();
-    let method = request_parts
-        .next()
-        .ok_or("HTTP method is missing")?
-        .to_owned();
-    let path = request_parts
-        .next()
-        .ok_or("HTTP path is missing")?
-        .to_owned();
-    if request_parts.next().is_none() {
-        return Err("HTTP version is missing".into());
+    let total = header_end + length;
+    if bytes.len() < total {
+        let received = bytes.len();
+        bytes.resize(total, 0);
+        stream.read_exact(&mut bytes[received..]).await?;
     }
-    let mut content_length = 0_usize;
-    for line in lines {
-        if let Some(value) = line.strip_prefix("Content-Length:") {
-            content_length = value.trim().parse()?;
+    request.body = bytes[header_end..total].to_vec();
+    Ok(request)
+}
+
+fn gui_error(status: &'static str, code: &str, message: &str) -> HttpResponse {
+    json_response(
+        status,
+        json!({"success":false,"error":{"code":code,"message":message}}),
+    )
+}
+
+fn validate_browser_request(
+    request: &HttpRequest,
+    security: &GuiSecurity,
+) -> Result<(), HttpResponse> {
+    // 固定 numeric Host，避免 DNS rebinding；連接埠也必須與 listener 一致。
+    if request.header("host") != Some(security.authority.as_str()) {
+        return Err(gui_error(
+            "403 Forbidden",
+            "GUI.INVALID_HOST",
+            "GUI Host does not match listener",
+        ));
+    }
+    if request.method == "POST" {
+        let origin = format!("http://{}", security.authority);
+        if request.header("origin") != Some(origin.as_str())
+            || request.header("x-nettool-csrf") != Some(security.csrf_token.as_str())
+        {
+            return Err(gui_error(
+                "403 Forbidden",
+                "GUI.INVALID_ORIGIN",
+                "same-origin GUI token is required",
+            ));
+        }
+        let json = request
+            .header("content-type")
+            .and_then(|value| value.split(';').next())
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
+        if !json {
+            return Err(gui_error(
+                "415 Unsupported Media Type",
+                "GUI.INVALID_CONTENT_TYPE",
+                "application/json is required",
+            ));
         }
     }
-    if content_length > MAX_HTTP_BODY_BYTES {
-        return Err("HTTP body exceeds bound".into());
-    }
-    while bytes.len() - header_end < content_length {
-        let mut chunk = [0_u8; 2048];
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            return Err("HTTP body ended before Content-Length".into());
-        }
-        bytes.extend_from_slice(&chunk[..read]);
-        if bytes.len() > MAX_HTTP_REQUEST_BYTES {
-            return Err("HTTP request exceeds bound".into());
-        }
-    }
-    Ok(HttpRequest {
-        method,
-        path,
-        body: bytes[header_end..header_end + content_length].to_vec(),
-    })
+    Ok(())
 }
 
 struct HttpResponse {
@@ -147,7 +258,10 @@ struct HttpResponse {
     body: Vec<u8>,
 }
 
-async fn route(request: HttpRequest) -> HttpResponse {
+async fn route(request: HttpRequest, security: &GuiSecurity) -> HttpResponse {
+    if let Err(response) = validate_browser_request(&request, security) {
+        return response;
+    }
     if request.method == "GET" && HEALTH_PATH.get().is_some_and(|path| path == &request.path) {
         return json_response("200 OK", json!({"service":"nettool-gui","status":"ok"}));
     }
@@ -155,7 +269,14 @@ async fn route(request: HttpRequest) -> HttpResponse {
         ("GET", "/" | "/index.html") => text_response(
             "200 OK",
             "text/html; charset=utf-8",
-            INDEX_HTML.as_bytes().to_vec(),
+            INDEX_HTML
+                .replace("__NETTOOL_CSRF_TOKEN__", &security.csrf_token)
+                .into_bytes(),
+        ),
+        ("GET", "/app.js") => text_response(
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            APP_JS.as_bytes().to_vec(),
         ),
         ("GET", "/api/actions") => {
             let actions = ActionRegistry::all()
@@ -188,44 +309,51 @@ async fn route(request: HttpRequest) -> HttpResponse {
     }
 }
 
-async fn execute_action(call: ActionCall) -> HttpResponse {
+fn encode_action(call: ActionCall, request_id: &str) -> Result<ActionRequest, HttpResponse> {
     let Some(descriptor) = ActionRegistry::find(&call.action) else {
-        return json_response(
+        return Err(json_response(
             "400 Bad Request",
             json!({"success":false,"error":{"code":"ACTION.UNKNOWN","message":"action is not registered"}}),
-        );
+        ));
     };
+    let payload_json = serde_json::to_vec(&call.payload)
+        .map_err(|error| gui_error("400 Bad Request", "GUI.INVALID_JSON", &error.to_string()))?;
+    Ok(ActionRequest {
+        action: descriptor.name.to_owned(),
+        payload_json,
+        operation_id: if descriptor.idempotent {
+            String::new()
+        } else {
+            request_id.to_owned()
+        },
+        dry_run: false,
+    })
+}
+
+async fn execute_action(call: ActionCall) -> HttpResponse {
     let request_id = request_id();
     let started = Instant::now();
-    tracing::info!(request_id = %request_id, action = %call.action, operation = "gui.action", "GUI action started");
+    let action = match encode_action(call, &request_id) {
+        Ok(action) => action,
+        Err(response) => return response,
+    };
+    tracing::info!(request_id = %request_id, action = %action.action, operation = "gui.action", "GUI action started");
     let envelope = AgentEnvelope {
         protocol_major: PROTOCOL_MAJOR,
         protocol_minor: PROTOCOL_MINOR,
         request_id: request_id.clone(),
-        payload: Some(agent_envelope::Payload::Request(ActionRequest {
-            action: descriptor.name.to_owned(),
-            payload_json: match serde_json::to_vec(&call.payload) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    return json_response(
-                        "400 Bad Request",
-                        json!({"success":false,"error":{"code":"GUI.INVALID_JSON","message":error.to_string()}}),
-                    );
-                }
-            },
-            operation_id: if descriptor.idempotent {
-                String::new()
-            } else {
-                request_id.clone()
-            },
-            dry_run: false,
-        })),
+        payload: Some(agent_envelope::Payload::Request(action)),
     };
     let response = match request(&default_socket_path(), &envelope).await {
         Ok(response) if response.request_id == request_id => match response.payload {
             Some(agent_envelope::Payload::Response(response)) if response.success => {
-                let data =
-                    serde_json::from_slice::<Value>(&response.data_json).unwrap_or(Value::Null);
+                let Ok(data) = serde_json::from_slice::<Value>(&response.data_json) else {
+                    return gui_error(
+                        "502 Bad Gateway",
+                        "AGENT.INVALID_MESSAGE",
+                        "agent response JSON is invalid",
+                    );
+                };
                 json_response(
                     "200 OK",
                     json!({"success":true,"request_id":request_id,"data":data}),
@@ -357,68 +485,117 @@ fn text_response(status: &'static str, content_type: &'static str, body: Vec<u8>
 async fn write_http_response(
     stream: &mut TcpStream,
     response: HttpResponse,
-) -> Result<(), Infallible> {
+) -> Result<(), std::io::Error> {
     let headers = format!(
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\r\nConnection: close\r\n\r\n",
         response.status,
         response.content_type,
         response.body.len()
     );
-    let _ = stream.write_all(headers.as_bytes()).await;
-    let _ = stream.write_all(&response.body).await;
-    let _ = stream.flush().await;
+    stream.write_all(headers.as_bytes()).await?;
+    stream.write_all(&response.body).await?;
+    stream.flush().await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::route;
+    use super::*;
+
+    fn security() -> GuiSecurity {
+        GuiSecurity {
+            authority: "127.0.0.1:8765".into(),
+            csrf_token: "test-token".into(),
+        }
+    }
+
+    fn request(method: &str, path: &str) -> HttpRequest {
+        HttpRequest {
+            method: method.into(),
+            path: path.into(),
+            body: Vec::new(),
+            headers: BTreeMap::from([
+                ("host".into(), "127.0.0.1:8765".into()),
+                ("origin".into(), "http://127.0.0.1:8765".into()),
+                ("content-type".into(), "application/json".into()),
+                ("x-nettool-csrf".into(), "test-token".into()),
+            ]),
+        }
+    }
 
     #[tokio::test]
-    async fn serves_dashboard_and_action_registry() {
-        let page = route(super::HttpRequest {
-            method: "GET".to_owned(),
-            path: "/".to_owned(),
-            body: Vec::new(),
-        })
-        .await;
+    async fn serves_dashboard_script_and_action_registry() {
+        let page = route(request("GET", "/"), &security()).await;
         assert_eq!(page.status, "200 OK");
-        assert!(
-            String::from_utf8(page.body)
-                .expect("HTML")
-                .contains("NetTool Dashboard")
+        let html = String::from_utf8(page.body).expect("HTML");
+        assert!(html.contains("NetTool Dashboard"));
+        assert!(html.contains("content=\"test-token\""));
+        assert!(!html.contains("__NETTOOL_CSRF_TOKEN__"));
+        assert!(!html.contains("<script>"));
+        assert_eq!(
+            route(request("GET", "/app.js"), &security()).await.body,
+            APP_JS.as_bytes()
         );
-
-        let actions = route(super::HttpRequest {
-            method: "GET".to_owned(),
-            path: "/api/actions".to_owned(),
-            body: Vec::new(),
-        })
-        .await;
+        let actions = route(request("GET", "/api/actions"), &security()).await;
         assert_eq!(actions.status, "200 OK");
         let actions = String::from_utf8(actions.body).expect("JSON");
         assert!(actions.contains("system.health"));
         assert!(actions.contains("\"server_only\":true"));
     }
 
-    #[test]
-    fn profiles_page_exposes_typed_create_and_read_controls() {
-        assert!(super::INDEX_HTML.contains("profile.create"));
-        assert!(super::INDEX_HTML.contains("profile.show"));
-        assert!(super::INDEX_HTML.contains("profile.apply"));
-        assert!(super::INDEX_HTML.contains("/api/portable-helper"));
-        assert!(super::INDEX_HTML.contains("Create profile"));
-        assert!(super::INDEX_HTML.contains("伺服器專用"));
+    #[tokio::test]
+    async fn rejects_cross_origin_missing_token_and_rebinding_before_dispatch() {
+        for path in ["/api/action", "/api/portable-helper"] {
+            for (header, value) in [
+                ("host", Some("attacker.invalid:8765")),
+                ("host", Some("127.0.0.1:9999")),
+                ("host", None),
+                ("origin", Some("https://attacker.invalid")),
+                ("origin", Some("null")),
+                ("origin", None),
+                ("x-nettool-csrf", Some("wrong")),
+                ("x-nettool-csrf", None),
+            ] {
+                let mut request = request("POST", path);
+                if let Some(value) = value {
+                    request.headers.insert(header.into(), value.into());
+                } else {
+                    request.headers.remove(header);
+                }
+                assert_eq!(
+                    route(request, &security()).await.status,
+                    "403 Forbidden",
+                    "{path}: {header}"
+                );
+            }
+            for value in [
+                None,
+                Some("text/plain"),
+                Some("application/x-www-form-urlencoded"),
+            ] {
+                let mut request = request("POST", path);
+                if let Some(value) = value {
+                    request.headers.insert("content-type".into(), value.into());
+                } else {
+                    request.headers.remove("content-type");
+                }
+                assert_eq!(
+                    route(request, &security()).await.status,
+                    "415 Unsupported Media Type"
+                );
+            }
+        }
+        let mut get = request("GET", "/");
+        get.headers
+            .insert("host".into(), "attacker.invalid:8765".into());
+        assert_eq!(route(get, &security()).await.status, "403 Forbidden");
     }
 
     #[tokio::test]
     async fn rejects_unknown_action_before_agent_connect() {
-        let response = route(super::HttpRequest {
-            method: "POST".to_owned(),
-            path: "/api/action".to_owned(),
-            body: br#"{"action":"shell.execute","payload":{}}"#.to_vec(),
-        })
-        .await;
+        let mut request = request("POST", "/api/action");
+        request.body = br#"{"action":"shell.execute","payload":{}}"#.to_vec();
+        let response = route(request, &security()).await;
         assert_eq!(response.status, "400 Bad Request");
         assert!(
             String::from_utf8(response.body)
@@ -426,4 +603,59 @@ mod tests {
                 .contains("ACTION.UNKNOWN")
         );
     }
+
+    #[tokio::test]
+    async fn parses_case_insensitive_headers_and_complete_body() {
+        let raw =
+            b"POST /api/action HTTP/1.1\r\nhost: 127.0.0.1:8765\r\ncOnTeNt-LeNgTh: 2\r\n\r\n{}";
+        let request = read_http_request(&mut raw.as_slice())
+            .await
+            .expect("valid HTTP");
+        assert_eq!(request.header("host"), Some("127.0.0.1:8765"));
+        assert_eq!(request.body, b"{}");
+        let (mut writer, mut reader) = tokio::io::duplex(16);
+        let sender = tokio::spawn(async move {
+            for chunk in raw.chunks(3) {
+                writer.write_all(chunk).await.expect("chunk");
+            }
+        });
+        assert_eq!(
+            read_http_request(&mut reader)
+                .await
+                .expect("fragmented request")
+                .body,
+            b"{}"
+        );
+        sender.await.expect("sender");
+    }
+
+    #[tokio::test]
+    async fn rejects_ambiguous_truncated_and_oversized_framing() {
+        for headers in [
+            "Content-Length: 0\r\ncontent-length: 0\r\n",
+            "Host: one\r\nhost: two\r\n",
+            "Origin: one\r\norigin: two\r\n",
+            "X-NetTool-CSRF: one\r\nx-nettool-csrf: two\r\n",
+            "Transfer-Encoding: chunked\r\n",
+            "Content-Length: -1\r\n",
+            "Content-Length: +1\r\n",
+            "Content-Length: 49153\r\n",
+            "Content-Length: 999999999999999999999999999999\r\n",
+            "bad header\r\n",
+        ] {
+            let raw = format!("POST /api/action HTTP/1.1\r\n{headers}\r\n");
+            assert!(
+                read_http_request(&mut raw.as_bytes()).await.is_err(),
+                "{headers}"
+            );
+        }
+        let raw = b"POST /api/action HTTP/1.1\r\nContent-Length: 3\r\n\r\n{}";
+        assert!(read_http_request(&mut raw.as_slice()).await.is_err());
+        let raw = format!(
+            "GET / HTTP/1.1\r\nX-Large: {}\r\n\r\n",
+            "a".repeat(MAX_HTTP_HEADER_BYTES)
+        );
+        assert!(read_http_request(&mut raw.as_bytes()).await.is_err());
+    }
+
 }

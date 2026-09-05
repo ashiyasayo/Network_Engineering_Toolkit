@@ -6,7 +6,7 @@
 
 | 規格項目 | 適用設備 | 主要實作 | 自動化證據 | 狀態 |
 | --- | --- | --- | --- | --- |
-| Agent/GUI/CLI typed Action | 一般裝置 | `crates/action`、`apps/agent`、`apps/cli`、`apps/gui` | workspace tests、Action registry uniqueness | 已完成（實機 GUI 待驗） |
+| Agent/GUI/CLI typed Action | 一般裝置 | `crates/action`、`apps/agent`、`apps/cli`、`apps/gui` | workspace tests、Action registry uniqueness、GUI HTTP security tests | Action 核心完成；GUI 提供查詢、Profiles／Node 表單與 Console，實機 GUI 待驗 |
 | Native desktop shell / installer | 一般裝置 | `apps/desktop`、`packaging/{macos,windows,linux}`、`.github/workflows/release.yml` | Tauri config、固定 allowlist staging scripts、portable bundle smoke test、stable signing gate | 殼層、staging、portable ZIP 與簽章 gate 完成；外部憑證實際執行、notarization、平台實機待驗 |
 | Profile / Hosts / Safe Apply | 一般裝置（需 Helper） | `crates/storage`、`crates/helper-core`、`crates/helper-server` | storage/helper tests、rollback/idempotency tests | 已完成（平台實機待驗） |
 | Node mTLS / trust reload | 一般裝置 | `crates/node`、`crates/storage`、`apps/agent` | Node protocol/Agent integration tests | 已完成 |
@@ -42,5 +42,7 @@ cargo test --workspace -- --ignored  # 需允許 dynamic socket bind 的受控 r
 ```
 
 這些命令證明 host 可編譯與邏輯測試通過，不取代規格要求的 Windows/Linux 實機與 100GbE hardware-lab evidence。
+
+GUI HTTP smoke test 使用 Node.js 18+，且需允許 loopback bind/connect：先以 `NETTOOL_GUI_LISTEN=127.0.0.1:18765 cargo run -p nettool-gui` 啟動隔離 GUI，再執行 `node apps/gui/tests/http-smoke.mjs http://127.0.0.1:18765`。測試只送未知 action 或應被安全 gate 拒絕的請求，不啟動 Agent、Helper 或變更網路。這不取代實際 WebView／UAC 操作驗收。
 
 實機 command、環境快照與 certification gate 的交接流程請參考 [Hardware Acceptance Runbook](HARDWARE_ACCEPTANCE.md)。

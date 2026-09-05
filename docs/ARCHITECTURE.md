@@ -59,6 +59,10 @@ flowchart LR
 
 依賴方向保持由應用層指向 action、domain、storage 與 backend；domain 不依賴 OS API 或資料平面實作。
 
+GUI 的 HTTP 語法由 `httparse` 解析，僅支援有界的 HTTP/1.1 定長 request；拒絕重複 header、Transfer-Encoding 與超量內容，讀取／寫入各有五秒期限，同時連線上限為 64。Host 必須符合 listener 的數字 IP 與連接埠；所有 POST（含 UAC Helper 啟動）另驗證同來源 Origin、啟動時產生的 256-bit 隨機 CSRF token 與 JSON Content-Type。這是瀏覽器來源隔離，不取代 Agent／Helper 的 OS 身分驗證。
+
+GUI script 由同來源 `/app.js` 載入；CSP 禁止 inline script、被嵌入 frame、外部連線與表單提交。API 結果以 `textContent` 呈現。
+
 ## 2. 控制平面與信任邊界
 
 目前控制平面：

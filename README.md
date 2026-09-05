@@ -37,6 +37,8 @@ cargo run -p nettool-desktop
 
 CLI 與 GUI 都經由 Agent Action API 執行；需要特權的網路設定與 Hosts 操作則交由 authenticated Helper。DPDK、AF_XDP 與 RIO 的 capability、implementation 和 runtime preflight 分開回報，預設 build 不會把未驗證的硬體能力標示為可用。未完成真實硬體 POC 前，任何結果都不標示為 `100G Certified`。
 
+請使用 listener 的數字 IP 與連接埠開啟 GUI，例如 `http://127.0.0.1:8765`，不使用 `localhost` 別名。
+
 ## 裝置定位
 
 伺服器專用是使用情境標示，不是授權限制：筆電仍可查看 capability／preflight，但缺少對應硬體或 native backend 時會回報 unavailable，不能將結果用作效能或 100GbE 驗收。

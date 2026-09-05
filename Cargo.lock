@@ -2255,6 +2255,8 @@ version = "0.1.7"
 name = "nettool-gui"
 version = "0.1.7"
 dependencies = [
+ "getrandom 0.4.3",
+ "httparse",
  "nettool-action",
  "nettool-agent-client",
  "nettool-agent-protocol",

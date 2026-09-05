@@ -192,7 +192,7 @@ fn gui_health_check(address: SocketAddr, health_path: &str) -> bool {
     let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
     if stream
         .write_all(
-            format!("GET {health_path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            format!("GET {health_path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
                 .as_bytes(),
         )
         .is_err()

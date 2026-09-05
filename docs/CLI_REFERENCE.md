@@ -44,6 +44,8 @@ cargo run -p nettool-gui
 
 Dashboard 的 Action Console 只列出 `ActionRegistry` 已註冊項目；payload 必須是 JSON，未知 action（包含任意 shell/command）會在 Agent 連線前拒絕。
 
+GUI 僅接受 listener 的數字 IP 與實際連接埠作為 Host；例如使用 `127.0.0.1:8765`，不能改用 `localhost:8765`。POST 必須包含相符的 Origin、首頁提供的 `X-NetTool-CSRF` token 與 `application/json` Content-Type；自動化操作應優先使用 CLI／Agent IPC。
+
 ## `nettool health`
 
 透過 Agent IPC 取得 runtime 與 database migration 健康狀態。

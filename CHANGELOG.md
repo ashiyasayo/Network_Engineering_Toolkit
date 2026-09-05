@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 修正 localhost GUI 的跨來源與 HTML 注入邊界：採用 httparse、精確 Host／Origin 與隨機 CSRF token 驗證、JSON Content-Type、CSP、文字輸出，以及有界連線與 HTTP I/O timeout；desktop health check 同步帶上實際連接埠。
+
 ## 0.1.7
 
 - 修正 GitHub Release Windows artifact glob，確保一般 portable 與 UAC portable ZIP 都會上傳。
