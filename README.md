@@ -39,6 +39,8 @@ CLI 與 GUI 都經由 Agent Action API 執行；需要特權的網路設定與 H
 
 GUI Profiles 提供 Apply、Confirm、Rollback 與確認倒數；重新整理同一分頁仍保留待確認操作。請使用 listener 的數字 IP 與連接埠開啟 GUI，例如 `http://127.0.0.1:8765`，不使用 `localhost` 別名。Speed history、Packet connections 與 Environment 是查詢頁面；詳細操作使用 CLI 或 Action Console。
 
+加速 `speed.run` 的 Agent orchestration 與 `perf.benchmark` hardware phase executor 尚未接入，即使連結 DPDK 也不代表這兩個操作可執行。底層 bounded RX／TX／capture 與完整測速、100GbE 認證是不同驗收項目。
+
 ## 裝置定位
 
 伺服器專用是使用情境標示，不是授權限制：筆電仍可查看 capability／preflight，但缺少對應硬體或 native backend 時會回報 unavailable，不能將結果用作效能或 100GbE 驗收。
