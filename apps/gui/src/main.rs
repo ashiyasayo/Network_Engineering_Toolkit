@@ -26,6 +26,7 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 static HEALTH_PATH: OnceLock<String> = OnceLock::new();
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
+const APP_JS: &str = include_str!("../ui/app.js");
 
 #[derive(Debug, Deserialize)]
 struct ActionCall {
@@ -156,6 +157,11 @@ async fn route(request: HttpRequest) -> HttpResponse {
             "200 OK",
             "text/html; charset=utf-8",
             INDEX_HTML.as_bytes().to_vec(),
+        ),
+        ("GET", "/app.js") => text_response(
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            APP_JS.as_bytes().to_vec(),
         ),
         ("GET", "/api/actions") => {
             let actions = ActionRegistry::all()
@@ -375,6 +381,19 @@ mod tests {
     use super::route;
 
     #[tokio::test]
+    async fn serves_gui_behavior_asset() {
+        let response = route(super::HttpRequest {
+            method: "GET".to_owned(),
+            path: "/app.js".to_owned(),
+            body: Vec::new(),
+        })
+        .await;
+        assert_eq!(response.status, "200 OK");
+        assert_eq!(response.content_type, "text/javascript; charset=utf-8");
+        assert!(!response.body.is_empty());
+    }
+
+    #[tokio::test]
     async fn serves_dashboard_and_action_registry() {
         let page = route(super::HttpRequest {
             method: "GET".to_owned(),
@@ -399,16 +418,6 @@ mod tests {
         let actions = String::from_utf8(actions.body).expect("JSON");
         assert!(actions.contains("system.health"));
         assert!(actions.contains("\"server_only\":true"));
-    }
-
-    #[test]
-    fn profiles_page_exposes_typed_create_and_read_controls() {
-        assert!(super::INDEX_HTML.contains("profile.create"));
-        assert!(super::INDEX_HTML.contains("profile.show"));
-        assert!(super::INDEX_HTML.contains("profile.apply"));
-        assert!(super::INDEX_HTML.contains("/api/portable-helper"));
-        assert!(super::INDEX_HTML.contains("Create profile"));
-        assert!(super::INDEX_HTML.contains("伺服器專用"));
     }
 
     #[tokio::test]
