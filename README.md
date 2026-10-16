@@ -26,6 +26,7 @@ cargo run -p nettool-desktop
 
 ## 文件
 
+- [GUI 功能與操作說明](docs/GUI_GUIDE.md)：中文導覽、基本測速、封包分析、Profile Safe Apply 與常見錯誤。
 - [架構說明](docs/ARCHITECTURE.md)：程序責任、IPC、信任邊界、資料平面與安全設計。
 - [CLI Reference](docs/CLI_REFERENCE.md)：CLI、GUI、輸出格式、全域選項與常用操作。
 - [規格追蹤矩陣](docs/REQUIREMENT_TRACEABILITY.md)：需求、實作模組、測試與驗收狀態。

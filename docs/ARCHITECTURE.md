@@ -49,6 +49,8 @@ flowchart LR
 
 ## 1. 程序責任與分層
 
+GUI 的 `index.html` 與 `app.js` 以 `include_str!` 內嵌於 `nettool-gui`，透過同源 `/` 與 `/app.js` 提供，Tauri 沿用同一套介面。瀏覽器負責導覽、表格、表單與輸入檢查；最終型別／權限驗證仍由 Agent 執行。動態回應以 DOM `textContent` 呈現。Safe Apply 控制區保留 Helper 回傳的 `operation_id`，確認／回復仍經 Agent，不由瀏覽器管理回復期限；重新載入頁面後可手動輸入既有識別碼。操作與平台限制請參閱 [GUI Guide](GUI_GUIDE.md)。
+
 | 程序 | 主要責任 | 明確不負責 |
 | --- | --- | --- |
 | `nettool-agent` | 唯一 runtime authority、Action API、SQLite metadata、Node control 與 session coordination | 直接執行特權 OS 命令 |

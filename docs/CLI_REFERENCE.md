@@ -26,6 +26,8 @@ cargo run -p nettool-desktop
 
 ## GUI
 
+完整逐頁操作與限制請參閱 [GUI 功能與操作說明](GUI_GUIDE.md)。GUI 提供繁體中文導覽、介面／Node／測速歷史表格、TCP／UDP socket 基本測速、PCAP／PCAPNG 路徑分析，以及 Profile Safe Apply 確認／回復。分析檔案須位於 Agent 可讀取的主機路徑；切換頁面不會取消測速或 Helper 操作。測速歷史頁不代表系統日誌。
+
 正式原生桌面殼層：
 
 ```bash
