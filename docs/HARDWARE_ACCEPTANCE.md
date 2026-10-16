@@ -6,6 +6,14 @@
 
 ## 共通前置
 
+### 實作與驗收順序
+
+先在可還原的 Windows VM 完成既有安裝／Helper／Safe Apply 驗收，再以一組隔離 Linux DPDK NIC 完成 bounded RX／TX／capture 的端到端 POC。完成這條路徑前暫緩擴充 RIO、AF_XDP 與認證框架；保留現有安全邊界與測試。
+
+加速 `speed.run` 目前仍由 Agent 明確拒絕，`perf.benchmark` 也沒有 hardware phase executor。後續接入須先補齊 duration／rate／warmup 等公開參數的實際量測語意、可取消 worker、失敗時雙端資源清理與可驗證結果；不得只移除 unavailable gate。下列硬體項目是驗收要求，部分仍需先完成對應 executor。
+
+Windows VM 的安裝、UAC consent 與 NIC rollback 依 `packaging/windows/test-release-acceptance.ps1` 執行；不在開發主機變更網路，也不在專用 runner 尚未就緒時把該 workflow 設為 stable 必要 gate。
+
 - 使用乾淨的 Linux x86_64 runner、Windows x64 runner，以及兩端相同版本的 release binary。
 - 準備獨立於 management NIC 的測試 NIC；記錄 PCI address、driver、firmware、link speed、MTU、RSS、RX/TX queue 與 NUMA node。
 - 保存 `cargo test --workspace -- --ignored`、`cargo clippy --workspace --all-targets -- -D warnings` 與 release binary checksum；dynamic socket test 必須允許 local bind。

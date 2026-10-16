@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+## 0.1.8
+
 - 擴充既有 GUI：繁體中文導覽與使用說明、功能總覽、網路介面／Node／測速歷史表格、TCP／UDP socket 測速與 PCAP／PCAPNG 離線分析表單。
 - GUI 新增 Profile Safe Apply 確認／回復控制，保留 Helper 操作識別碼，並提供載入狀態、輸入驗證、Helper／backend 限制與明確錯誤提示；Node 憑證傳遞說明同步修正。
 - 新增 GUI 操作指南與 JavaScript 行為／瀏覽器流程測試；介面資源仍內嵌於 GUI binary，不需額外 npm runtime。
+- 修正 localhost GUI 的跨來源與 HTML 注入邊界：採用 httparse、精確 Host／Origin 與隨機 CSRF token 驗證、JSON Content-Type、CSP、文字輸出，以及有界連線與 HTTP I/O timeout；desktop health check 同步帶上實際連接埠。
+- GUI Profiles 補上 Safe Apply Confirm／Rollback、期限倒數與分頁重新整理恢復；失聯時保留操作 ID，UAC transport 重試沿用同一 ID，逾期不誤報回復成功。獨立 GUI 支援已設定的外部 Helper。
+- GUI 查詢頁改以 Speed history、Packet connections、Environment 命名，合併重複的 Logs 入口；新增 HTTP 安全與前端操作回歸測試。
+
 ## 0.1.7
 
 - 修正 GitHub Release Windows artifact glob，確保一般 portable 與 UAC portable ZIP 都會上傳。

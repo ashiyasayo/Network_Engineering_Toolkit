@@ -49,7 +49,7 @@ flowchart LR
 
 ## 1. 程序責任與分層
 
-GUI 的 `index.html` 與 `app.js` 以 `include_str!` 內嵌於 `nettool-gui`，透過同源 `/` 與 `/app.js` 提供，Tauri 沿用同一套介面。瀏覽器負責導覽、表格、表單與輸入檢查；最終型別／權限驗證仍由 Agent 執行。動態回應以 DOM `textContent` 呈現。Safe Apply 控制區保留 Helper 回傳的 `operation_id`，確認／回復仍經 Agent，不由瀏覽器管理回復期限；重新載入頁面後可手動輸入既有識別碼。操作與平台限制請參閱 [GUI Guide](GUI_GUIDE.md)。
+GUI 的 `index.html` 與 `app.js` 以 `include_str!` 內嵌於 `nettool-gui`，透過同源 `/` 與 `/app.js` 提供，Tauri 沿用同一套介面。瀏覽器負責導覽、表格、表單與輸入檢查；最終型別／權限驗證仍由 Agent 執行。動態回應以 DOM `textContent` 呈現。Safe Apply 在送出變更前保存固定 `operation_id` 至分頁 sessionStorage，失聯與重新整理後保留復原控制；確認／回復仍經 Agent，不由瀏覽器管理 Helper 回復期限。操作與平台限制請參閱 [GUI Guide](GUI_GUIDE.md)。
 
 | 程序 | 主要責任 | 明確不負責 |
 | --- | --- | --- |
@@ -60,6 +60,10 @@ GUI 的 `index.html` 與 `app.js` 以 `include_str!` 內嵌於 `nettool-gui`，�
 | `nettool-dataplane` | probe、socket/backend worker、封包分析與硬體 evidence | 取代 Agent 的 trust、session 或設定權限 |
 
 依賴方向保持由應用層指向 action、domain、storage 與 backend；domain 不依賴 OS API 或資料平面實作。
+
+GUI 的 HTTP 語法由 `httparse` 解析，僅支援有界的 HTTP/1.1 定長 request；拒絕重複 header、Transfer-Encoding 與超量內容，讀取／寫入各有五秒期限，同時連線上限為 64。Host 必須符合 listener 的數字 IP 與連接埠；所有 POST（含 UAC Helper 啟動）另驗證同來源 Origin、啟動時產生的 256-bit 隨機 CSRF token 與 JSON Content-Type。這是瀏覽器來源隔離，不取代 Agent／Helper 的 OS 身分驗證。
+
+GUI script 由同來源 `/app.js` 載入；CSP 禁止 inline script、被嵌入 frame、外部連線與表單提交。API 結果以 `textContent` 呈現。Safe Apply 的分頁提示只保存 operation ID、介面、狀態與期限；Helper 仍是 rollback authority，GUI 不以本機倒數推論已回復。GUI Action envelope 可攜帶有界 `operation_id`，讓 UAC readiness 的 transport 重試使用同一操作；CLI／Agent wire protocol 不變。
 
 ## 2. 控制平面與信任邊界
 

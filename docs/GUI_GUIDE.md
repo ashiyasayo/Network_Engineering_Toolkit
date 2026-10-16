@@ -48,9 +48,9 @@ GUI 僅接受 loopback 監聽。Agent 未啟動時，頁面顯示原始錯誤碼
 4. 按「套用 Profile」，確認目標。一般 portable 需要另行安裝 Helper；UAC portable 會要求提高權限。
 5. 成功後，上方顯示 Helper 的 `operation_id` 與期限。檢查實際網路連線，再按「確認保留設定」；需撤銷時按「回復原設定」。
 
-Helper 負責期限及回復，切換 GUI 頁面不會取消此操作。GUI 只在 Helper 明確回報成功後顯示確認／回復完成。重新載入瀏覽器會清除頁面記憶，可從保存的原始套用結果貼回 `operation_id`；它不同於追蹤請求用的 `request_id`。
+Helper 負責期限及回復，切換 GUI 頁面不會取消此操作。GUI 在送出套用前將操作識別碼存入目前分頁的 sessionStorage，重新整理後仍保留復原控制；若保存失敗，就不送出系統變更。確認只有在 Helper 明確回報套用成功且期限未過時才能使用。手動貼入既有 `operation_id` 僅供要求回復；它不同於追蹤請求用的 `request_id`。
 
-逾期、連線失敗或回復失敗時，以 Helper 狀態與實際網路為準。請保留操作識別碼並依錯誤處理，不要重複套用來推測是否成功。剛接受 UAC 後若 Helper 尚未就緒，會顯示 transport 錯誤；確認 Helper 與操作狀態後再重試。一般瀏覽器模式須讓 GUI 與 Agent 使用一致的 Helper 設定；`NETTOOL_HELPER_MODE=external` 表示使用已設定的 Helper。
+逾期、連線失敗或回復失敗時，以 Helper 狀態與實際網路為準。失聯時保留操作識別碼，不自動重新建立交易；明確可重試的 Helper transport 錯誤最多重試 10 次，固定沿用同一 ID 與參數。期限過後可清除本頁提示，但這不代表 Helper 已完成回復。一般瀏覽器模式須讓 GUI 與 Agent 使用一致的 Helper 設定；GUI 可辨識既有外部 Helper 設定，`NETTOOL_HELPER_MODE=external` 也可明確指定此模式。
 
 Profile 編輯、刪除、匯入／匯出與快速 IP／DNS 設定仍可使用 [CLI Reference](CLI_REFERENCE.md) 或 Action Console。
 
@@ -88,7 +88,7 @@ TCP 不送 UDP 速率；表單不啟用 socket executor 不支援的 auto-tune�
 ## 開發驗證
 
 ```powershell
-node --test apps/gui/tests/ui.test.cjs
+node --test apps/gui/tests/ui.test.cjs apps/gui/tests/ui.test.mjs
 cargo test -p nettool-gui
 ```
 

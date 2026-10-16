@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="nettool-csrf" content="__NETTOOL_CSRF_TOKEN__">
     <title>NetTool Dashboard</title>
     <style>
         :root { color-scheme:dark; --bg:#0f172a; --panel:#172033; --line:#34445e; --accent:#74c9f0; --muted:#b0bfd3; --text:#e5eefc; }
@@ -64,9 +65,10 @@
             <header class="toolbar"><div><h2 id="page">功能總覽</h2><p id="page-hint" class="hint intro"></p></div><button class="secondary" id="refresh" type="button">重新整理</button></header>
             <section id="safe-apply" class="card notice" hidden aria-labelledby="safe-title">
                 <h3 id="safe-title">Safe Apply 確認／回復</h3>
-                <p class="hint">套用後請先檢查網路連線，再於 Helper 期限內確認；未確認會由 Helper 嘗試自動回復。重新載入頁面後，可貼上先前結果中的 operation_id。</p>
+                <p id="safe-summary" class="status" role="status"></p>
+                <p class="hint">套用後請先檢查網路連線，再於 Helper 期限內確認；未確認會由 Helper 嘗試自動回復。待確認操作會保存在目前分頁，重新整理仍可復原；手動輸入識別碼僅供要求回復。</p>
                 <label>操作識別碼（operation_id）<input id="operation-id" autocomplete="off"></label>
-                <div class="actions"><button id="profile-confirm" class="primary" type="button">確認保留設定</button><button id="profile-rollback" class="secondary" type="button">回復原設定</button></div>
+                <div class="actions"><button id="profile-confirm" class="primary" type="button">確認保留設定</button><button id="profile-rollback" class="secondary" type="button">回復原設定</button><button id="profile-dismiss" class="secondary" type="button" hidden>清除過期提示</button></div>
                 <p id="safe-status" class="status" role="status" aria-live="polite"></p>
             </section>
             <section id="content" aria-label="目前功能"></section>

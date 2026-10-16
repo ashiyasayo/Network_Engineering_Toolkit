@@ -20,7 +20,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - name: Run GUI JavaScript behavior tests
-        run: node --test apps/gui/tests/ui.test.cjs
+        run: node --test apps/gui/tests/ui.test.cjs apps/gui/tests/ui.test.mjs
       # 只使用 loopback 與 ephemeral port；三平台都必須執行 mTLS/socket regression suite。
       - name: Run loopback integration tests
         run: |

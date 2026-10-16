@@ -353,24 +353,40 @@ fn quote_windows_argument(argument: &str) -> String {
 }
 
 /// 非 Windows 平台不能取得 Windows SID。
+///
+/// # Errors
+///
+/// 此平台不支援 Windows SID，固定回傳不可用錯誤。
 #[cfg(not(windows))]
 pub fn current_user_sid() -> Result<String, String> {
     Err("Windows current user SID is unavailable on this platform".to_owned())
 }
 
 /// 非 Windows 平台不能透過 UAC 啟動 Helper。
+///
+/// # Errors
+///
+/// 此平台不支援 UAC，固定回傳不可用錯誤。
 #[cfg(not(windows))]
 pub fn launch_elevated(_executable: &std::path::Path, _arguments: &[String]) -> Result<(), String> {
     Err("Windows UAC helper launch is unavailable on this platform".to_owned())
 }
 
 /// 非 Windows 平台沒有 Windows 系統 Hosts 路徑。
+///
+/// # Errors
+///
+/// 此平台沒有 Windows Hosts 路徑，固定回傳不可用錯誤。
 #[cfg(not(windows))]
 pub fn windows_hosts_path() -> Result<std::path::PathBuf, String> {
     Err("Windows Hosts path is unavailable on this platform".to_owned())
 }
 
 /// 非 Windows 平台沒有 SCM service dispatcher。
+///
+/// # Errors
+///
+/// 此平台不支援 Windows Service，固定回傳不可用錯誤。
 #[cfg(not(windows))]
 pub fn run_windows_service(
     _service_name: &str,

@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+getrandom.workspace = true
+httparse = "1.10"
 nettool-action = { path = "../../crates/action" }
 nettool-agent-client = { path = "../../crates/agent-client" }
 nettool-agent-protocol = { path = "../../crates/agent-protocol" }

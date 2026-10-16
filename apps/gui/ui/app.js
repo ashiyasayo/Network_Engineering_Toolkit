@@ -37,6 +37,68 @@
     function safeApplyCompleted(action, data) {
         return action === 'profile.confirm' ? data?.state === 'confirmed' : action === 'profile.rollback' && data?.rolled_back === true;
     }
+    class SafeApplySession {
+        constructor(storage, send, changed, now = () => Date.now(), wait = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+            this.storage = storage; this.send = send; this.changed = changed; this.now = now; this.wait = wait;
+            this.pending = null; this.busy = false; this.key = 'nettool.pending-safe-apply';
+        }
+        restore() {
+            const saved = JSON.parse(this.storage.getItem(this.key) || 'null');
+            if (saved) {
+                if (!/^[A-Za-z0-9_-]{1,128}$/.test(saved.operation_id) || typeof saved.operation_id !== 'string'
+                    || !Number.isSafeInteger(saved.deadline_unix_seconds) || typeof saved.target_interface !== 'string'
+                    || !['unknown', 'pending_confirmation'].includes(saved.state)) throw new Error('保存的 Safe Apply 操作格式無效，請檢查原始操作識別碼。');
+                this.pending = saved;
+            }
+            this.changed();
+        }
+        save(record) {
+            // 必須在送出變更前成功保存，才能在失聯或重新整理後恢復操作識別碼。
+            this.storage.setItem(this.key, JSON.stringify(record)); this.pending = record; this.changed();
+        }
+        get remaining() { return this.pending ? Math.max(0, Math.ceil(this.pending.deadline_unix_seconds - this.now() / 1000)) : 0; }
+        get canConfirm() { return !!this.pending && this.pending.state === 'pending_confirmation' && this.remaining > 0 && !this.busy; }
+        async apply(payload, prepare, action = 'profile.apply') {
+            if (this.busy || this.pending) throw new Error('請先完成目前的 Safe Apply 確認或回復。');
+            this.busy = true; this.changed();
+            try {
+                await prepare();
+                const record = { operation_id: 'gui-' + globalThis.crypto.randomUUID(), target_interface: payload.interface_id,
+                    deadline_unix_seconds: Math.floor(this.now() / 1000) + (payload.confirm_timeout_seconds ?? 60), state: 'unknown' };
+                this.save(record);
+                let response;
+                for (let attempt = 0; attempt < 10; attempt++) {
+                    try { response = await this.send(action, payload, record.operation_id); break; }
+                    catch (error) {
+                        // 僅對明確的 Helper transport 失敗重試，並保留完全相同的交易 ID。
+                        if (error.code !== 'HELPER.TRANSPORT_FAILED' || !error.retryable || attempt === 9) throw error;
+                        await this.wait(250);
+                    }
+                }
+                if (!response.success || response.data?.operation_id !== record.operation_id || response.data.state !== 'pending_confirmation'
+                    || !Number.isSafeInteger(response.data.deadline_unix_seconds)) throw new Error('Helper 未回傳有效的操作識別碼或確認期限；已保留復原資訊。');
+                this.save({ ...record, state: response.data.state, deadline_unix_seconds: response.data.deadline_unix_seconds });
+                return response;
+            } finally { this.busy = false; this.changed(); }
+        }
+        async finish(action) {
+            if (this.busy || !this.pending) throw new Error('沒有可處理的 Safe Apply 操作，或目前仍在處理中。');
+            if (action !== 'profile.confirm' && action !== 'profile.rollback') throw new Error('Safe Apply 操作無效。');
+            if (action === 'profile.confirm' && !this.canConfirm) throw new Error('套用結果未確認或期限已過，請查核或要求回復。');
+            const record = this.pending; this.busy = true; this.changed();
+            try {
+                const response = await this.send(action, { operation_id: record.operation_id });
+                if (!response.success || !safeApplyCompleted(action, response.data)
+                    || (action === 'profile.confirm' && response.data.operation_id !== record.operation_id)) throw new Error('Helper 未回報預期的完成狀態；已保留復原資訊。');
+                this.storage.removeItem(this.key); this.pending = null;
+                return response;
+            } finally { this.busy = false; this.changed(); }
+        }
+        dismiss() {
+            if (this.busy || this.remaining > 0) throw new Error('操作尚未到期，請先確認或回復。');
+            this.storage.removeItem(this.key); this.pending = null; this.changed();
+        }
+    }
     function agentError(error) {
         const hints = {
             'HELPER.NOT_CONFIGURED': '請安裝並設定 Helper；Windows 可使用 Helper MSI 或 UAC portable。',
@@ -45,9 +107,14 @@
             'NODE.NOT_PAIRED': '請先到「Node 配對」建立可信任的測速對端。',
             'DATAPLANE.BACKEND_NOT_BUILT': '目前建置未連結所需 backend，請檢查「環境與能力」。',
         };
-        return new Error(`[${error?.code || 'GUI.ACTION_FAILED'}] ${error?.message || '操作失敗。'} ${hints[error?.code] || ''}`.trim());
+        return Object.assign(new Error(`[${error?.code || 'GUI.ACTION_FAILED'}] ${error?.message || '操作失敗。'} ${hints[error?.code] || ''}`.trim()), { code: error?.code, retryable: error?.retryable === true });
     }
     async function requestJson(url, options, transport = globalThis.fetch) {
+        if (options?.method === 'POST') {
+            const token = typeof document === 'undefined' ? '' : document.querySelector('meta[name="nettool-csrf"]')?.content;
+            if (typeof document !== 'undefined' && !token) throw new Error('GUI 頁面缺少同源權杖，請重新整理。');
+            options = { ...options, headers: { ...options.headers, 'Content-Type': 'application/json', ...(token ? { 'X-NetTool-CSRF': token } : {}) }, body: options.body ?? '{}' };
+        }
         let response;
         try { response = await transport(url, options); }
         catch { throw new Error('無法連線至 GUI 服務，請確認 nettool-gui 已啟動。若正在變更設定，請先檢查結果，避免重複送出。'); }
@@ -58,18 +125,19 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}：GUI 服務無法完成請求。`);
         return data;
     }
-    async function requestAction(action, payload, transport) {
-        const body = JSON.stringify({ action, payload });
+    async function requestAction(action, payload, transport, operationId) {
+        const body = JSON.stringify({ action, payload, ...(operationId ? { operation_id: operationId } : {}) });
         if (new TextEncoder().encode(body).length > 48 * 1024) throw new Error('請求超過 GUI 的 48 KiB 上限，請縮小參數或憑證。');
         const response = await requestJson('/api/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body }, transport);
         if (response?.success !== true) throw new Error('Agent 回應格式無效，請檢查服務版本。');
         return response;
     }
-    if (typeof module !== 'undefined' && module.exports) module.exports = { buildSpeedPayload, buildAnalyzePayload, safeApplyOperation, safeApplyCompleted, requestAction };
+    if (typeof module !== 'undefined' && module.exports) module.exports = { buildSpeedPayload, buildAnalyzePayload, safeApplyOperation, safeApplyCompleted, requestAction, SafeApplySession };
     if (typeof document === 'undefined') return;
 
     const $ = selector => document.querySelector(selector), content = $('#content'), actionMetadata = new Map();
-    let currentPage = 'dashboard', speedRunning = false, applyRunning = false, safeBusy = false, pendingOperation = '';
+    let currentPage = 'dashboard', speedRunning = false, applyRunning = false, restoreError = false;
+    const safeSession = new SafeApplySession(sessionStorage, (action, payload, operationId) => requestAction(action, payload, undefined, operationId), updateSafeApply);
     const pages = {
         dashboard: ['功能總覽', '查看服務狀態，選擇要執行的網路工作。'],
         interfaces: ['網路介面', '查詢 IP、驅動與速度；未知欄位顯示「未提供」。'],
@@ -143,7 +211,7 @@
             submit.disabled = true; report(message, '處理中…');
             try { await action(Object.fromEntries(new FormData(form))); }
             catch (error) { report(message, error.message, true); }
-            finally { submit.disabled = false; }
+            finally { submit.disabled = false; if (submit.id === 'profile-apply') updateSafeApply(); }
         });
     }
     function formCard(parent, title, hint) { const panel = card(parent, title, hint), form = element('form'); panel.append(form); return { panel, form }; }
@@ -179,11 +247,11 @@
         const apply = button(form, '套用 Profile', null, true); apply.type = 'submit'; apply.id = 'profile-apply'; apply.disabled = true;
         const message = status(detail); let selected = '', selection = 0;
         async function show(id) {
-            const revision = ++selection; selected = ''; apply.disabled = true; output.textContent = '讀取中…';
+            const revision = ++selection; selected = ''; apply.dataset.selected = ''; apply.disabled = true; output.textContent = '讀取中…';
             try {
                 const response = await requestAction('profile.show', { id_or_name: id });
                 if (revision !== selection) return;
-                output.textContent = JSON.stringify(response.data, null, 2); selected = id; apply.disabled = applyRunning;
+                output.textContent = JSON.stringify(response.data, null, 2); selected = id; apply.dataset.selected = id; updateSafeApply();
             } catch (error) { if (revision === selection) report(message, error.message, true); }
         }
         async function load() {
@@ -198,18 +266,15 @@
             } catch (error) { list.replaceChildren(element('p', error.message, 'error')); }
         }
         bindForm(form, apply, message, async data => {
-            if (applyRunning || pendingOperation) throw new Error('請先完成目前的 Safe Apply 確認或回復。');
+            if (applyRunning || safeSession.pending) throw new Error('請先完成目前的 Safe Apply 確認或回復。');
             const payload = { id_or_name: required(selected, 'Profile'), interface_id: required(data.interface_id, '目標介面'), confirm_timeout_seconds: integer(data.timeout, '確認期限', 10, 600) };
             if (!globalThis.confirm(`將 Profile「${selected}」套用到「${payload.interface_id}」？網路連線可能暫時中斷。`)) { report(message, '已取消套用。'); return; }
             applyRunning = true;
             try {
-                await requestJson('/api/portable-helper', { method: 'POST' });
-                const response = await requestAction('profile.apply', payload); output.textContent = JSON.stringify(response, null, 2);
-                pendingOperation = safeApplyOperation(response); $('#operation-id').value = pendingOperation; $('#safe-apply').hidden = false;
-                const deadline = response.data.deadline_unix_seconds;
-                report($('#safe-status'), `已套用，等待確認。${deadline ? `Helper 期限：${new Date(deadline * 1000).toLocaleString('zh-TW')}。` : ''}請先檢查連線。`);
+                const response = await safeSession.apply(payload, () => requestJson('/api/portable-helper', { method: 'POST' }));
+                output.textContent = JSON.stringify(response, null, 2);
                 report(message, '已套用，請使用頁面上方 Safe Apply 確認或回復。');
-            } finally { applyRunning = false; }
+            } finally { applyRunning = false; updateSafeApply(); }
         });
         const create = formCard(content, '建立 Profile', '預設為 IPv4 DHCP、IPv6 自動設定與自動 DNS。進階設定可修改完整 JSON，由 Agent 驗證。');
         const fields = element('div', undefined, 'form-grid'); create.form.append(fields);
@@ -225,17 +290,35 @@
             await load(); await show(id);
         }); load();
     }
+    function updateSafeApply() {
+        const record = safeSession.pending, input = $('#operation-id');
+        $('#safe-apply').hidden = currentPage !== 'profiles' && !record && !restoreError;
+        const apply = $('#profile-apply');
+        if (apply) apply.disabled = applyRunning || safeSession.busy || !!record || !apply.dataset.selected;
+        input.readOnly = !!record;
+        if (record) {
+            input.value = record.operation_id;
+            report($('#safe-summary'), `介面 ${record.target_interface}，操作 ${record.operation_id}。` + (safeSession.remaining > 0
+                ? `${record.state === 'pending_confirmation' ? '請檢查連線後確認' : '套用結果尚未確認，可要求回復'}；剩餘 ${safeSession.remaining} 秒。`
+                : '確認期限已過；尚未取得回復完成證據。'));
+        } else $('#safe-summary').textContent = '';
+        $('#profile-confirm').disabled = record ? !safeSession.canConfirm : safeSession.busy;
+        $('#profile-rollback').disabled = safeSession.busy;
+        $('#profile-dismiss').hidden = !record || safeSession.remaining > 0;
+        $('#profile-dismiss').disabled = safeSession.busy;
+    }
     async function finishSafeApply(action) {
-        const message = $('#safe-status'); if (safeBusy) return;
-        safeBusy = true; $('#profile-confirm').disabled = true; $('#profile-rollback').disabled = true;
+        const message = $('#safe-status');
         try {
-            const operation_id = required($('#operation-id').value, '操作識別碼'); report(message, '處理中…');
-            const response = await requestAction(action, { operation_id });
-            if (!safeApplyCompleted(action, response.data)) throw new Error(`Helper 尚未回報操作成功，請檢查 Helper；操作識別碼已保留。`);
-            if (pendingOperation === operation_id) pendingOperation = '';
+            if (!safeSession.pending) {
+                const operation_id = required($('#operation-id').value, '操作識別碼');
+                if (!/^[A-Za-z0-9_-]{1,128}$/.test(operation_id)) throw new Error('操作識別碼格式無效。');
+                safeSession.save({ operation_id, target_interface: '手動復原', state: 'unknown', deadline_unix_seconds: 0 });
+            }
+            await safeSession.finish(action);
+            $('#safe-apply').hidden = false;
             $('#operation-id').value = ''; report(message, action === 'profile.confirm' ? '已確認保留設定。' : '已回復原設定。');
         } catch (error) { report(message, error.message, true); }
-        finally { safeBusy = false; $('#profile-confirm').disabled = false; $('#profile-rollback').disabled = false; }
     }
     function history(parent = content) {
         const panel = card(parent, '最近測速紀錄');
@@ -316,7 +399,7 @@
         if (!pages[name]) return;
         currentPage = name; $('#page').textContent = pages[name][0]; $('#page-hint').textContent = pages[name][1];
         document.querySelectorAll('nav button').forEach(node => { if (node.dataset.page === name) node.setAttribute('aria-current', 'page'); else node.removeAttribute('aria-current'); });
-        content.replaceChildren(); $('#safe-apply').hidden = name !== 'profiles' && !pendingOperation && !applyRunning;
+        content.replaceChildren(); updateSafeApply();
         const renderers = {
             dashboard, interfaces, profiles, speed, packets, nodes, history, help,
             hosts: () => { const panel = card(content, '目前 Hosts', '本頁唯讀；修改、啟停、備份與恢復使用 CLI 或 Action Console，需要 Helper。'); query(panel, 'hosts.read', {}, data => panel.append(element('pre', typeof data === 'string' ? data : JSON.stringify(data, null, 2)))); },
@@ -339,19 +422,27 @@
     $('#refresh').addEventListener('click', () => { navigate(currentPage); if (!actionMetadata.size) loadActions(); });
     $('#profile-confirm').addEventListener('click', () => finishSafeApply('profile.confirm'));
     $('#profile-rollback').addEventListener('click', () => finishSafeApply('profile.rollback'));
+    $('#profile-dismiss').addEventListener('click', () => {
+        try {
+            if (!globalThis.confirm('清除過期提示不代表 Helper 已完成回復，請先確認實際網路狀態。仍要清除？')) return;
+            safeSession.dismiss(); $('#operation-id').value = ''; report($('#safe-status'), '已清除本頁提示，未宣稱 Helper 已回復。');
+        } catch (error) { report($('#safe-status'), error.message, true); }
+    });
     $('#action-select').addEventListener('change', actionScope);
     $('#run-action').addEventListener('click', async event => {
         const run = event.currentTarget, output = $('#action-result'); run.disabled = true; output.textContent = '處理中…';
         try {
             const action = $('#action-select').value, descriptor = actionMetadata.get(action); if (!descriptor) throw new Error('請選取有效 Action。');
             const payload = JSON.parse($('#action-payload').value); if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('參數必須是 JSON object。');
-            if (['profile.apply', 'ip.set', 'ip.dhcp', 'dns.set'].includes(action) && (pendingOperation || applyRunning)) throw new Error('請先完成目前的 Safe Apply 確認或回復。');
+            if (['profile.apply', 'ip.set', 'ip.dhcp', 'dns.set'].includes(action) && (safeSession.pending || applyRunning)) throw new Error('請先完成目前的 Safe Apply 確認或回復。');
             if (descriptor.permission !== 'ReadOnly' && !globalThis.confirm(`確定執行 ${action}？請核對參數與影響。`)) { output.textContent = '已取消操作。'; return; }
-            const response = await requestAction(action, payload); output.textContent = JSON.stringify(response, null, 2);
-            if (['profile.apply', 'ip.set', 'ip.dhcp', 'dns.set'].includes(action)) {
-                pendingOperation = safeApplyOperation(response); $('#operation-id').value = pendingOperation; $('#safe-apply').hidden = false; report($('#safe-status'), '已套用，請檢查連線並在 Helper 期限內確認或回復。');
-            }
+            const response = ['profile.apply', 'ip.set', 'ip.dhcp', 'dns.set'].includes(action)
+                ? await safeSession.apply(payload, async () => {}, action) : await requestAction(action, payload);
+            output.textContent = JSON.stringify(response, null, 2);
         } catch (error) { output.textContent = error.message; }
         finally { run.disabled = false; }
-    }); loadActions(); navigate('dashboard');
+    });
+    try { safeSession.restore(); } catch (error) { restoreError = true; $('#safe-apply').hidden = false; report($('#safe-status'), error.message, true); }
+    setInterval(() => { if (safeSession.pending) updateSafeApply(); }, 1000);
+    loadActions(); navigate('dashboard');
 }());

@@ -17,6 +17,7 @@ async (page) => {
             { name: 'system.health', permission: 'ReadOnly', idempotent: true, server_only: false, cli: 'nettool health' },
             { name: 'perf.topology', permission: 'ReadOnly', idempotent: true, server_only: true, cli: 'nettool perf topology' },
         ]);
+        assert(/^[a-f0-9]{64}$/.test(route.request().headers()['x-nettool-csrf'] || ''), 'POST 未帶入同源權杖');
         if (url.pathname === '/api/portable-helper') return respond(route, { success: true, mode: 'external' });
         const request = route.request().postDataJSON(); requests.push(request);
         const { action, payload } = request;
@@ -33,7 +34,7 @@ async (page) => {
             case 'profile.list': data = profiles; break;
             case 'profile.create': profiles = [{ id: payload.id, name: payload.name, active_revision: 1 }]; data = profiles[0]; break;
             case 'profile.show': data = { summary: profiles[0], configuration }; break;
-            case 'profile.apply': data = { operation_id: 'helper-operation', target_interface: payload.interface_id, snapshot_id: 'snapshot', deadline_unix_seconds: Math.floor(Date.now() / 1000) + 60, state: 'pending_confirmation', old_state_hash: 'old', new_state_hash: 'new' }; break;
+            case 'profile.apply': data = { operation_id: request.operation_id, target_interface: payload.interface_id, snapshot_id: 'snapshot', deadline_unix_seconds: Math.floor(Date.now() / 1000) + 60, state: 'pending_confirmation', old_state_hash: 'old', new_state_hash: 'new' }; break;
             case 'profile.confirm':
                 if (confirmFails) return respond(route, { success: false, error: { code: 'HELPER.TRANSPORT_FAILED', message: 'helper offline', retryable: true } });
                 data = { operation_id: payload.operation_id, state: 'confirmed' }; break;
@@ -47,6 +48,8 @@ async (page) => {
     await page.route(`${base}/api/**`, handler);
     try {
         await page.goto(base);
+        await page.evaluate(() => sessionStorage.removeItem('nettool.pending-safe-apply'));
+        await page.reload();
         await page.evaluate(() => { window.__testOriginalConfirm = window.confirm; window.confirm = () => true; });
         await page.getByText('Agent 運作正常', { exact: true }).waitFor(); checks.push('健康狀態');
         await nav('interfaces'); await page.locator('table tbody tr').waitFor();
@@ -83,9 +86,14 @@ async (page) => {
         await page.locator('#profile-apply').waitFor(); await page.waitForFunction(() => !document.querySelector('#profile-apply').disabled);
         await page.locator('#profile-interface').fill('Ethernet'); await page.locator('#profile-apply').click();
         await page.getByText('已套用，請使用頁面上方 Safe Apply 確認或回復。', { exact: true }).waitFor();
-        assert(await page.locator('#operation-id').inputValue() === 'helper-operation', '使用了錯誤的 operation ID');
+        const operationId = requests.find(item => item.action === 'profile.apply').operation_id;
+        assert(operationId?.startsWith('gui-') && await page.locator('#operation-id').inputValue() === operationId, '使用了錯誤的 operation ID');
+        assert(await page.locator('#profile-apply').isDisabled(), '待確認操作未停用 Apply');
+        await page.reload();
+        await page.evaluate(() => { window.__testOriginalConfirm = window.confirm; window.confirm = () => true; });
+        assert(await page.locator('#operation-id').inputValue() === operationId, '重新整理遺失 Safe Apply');
         await nav('interfaces'); assert(await page.locator('#safe-apply').isVisible(), '切換頁面遺失 Safe Apply');
-        await page.locator('#profile-confirm').click(); await page.locator('#safe-status.error').waitFor(); assert(await page.locator('#operation-id').inputValue() === 'helper-operation', '確認失敗清除了 operation ID');
+        await page.locator('#profile-confirm').click(); await page.locator('#safe-status.error').waitFor(); assert(await page.locator('#operation-id').inputValue() === operationId, '確認失敗清除了 operation ID');
         confirmFails = false; await page.locator('#profile-confirm').click(); await page.getByText('已確認保留設定。', { exact: true }).waitFor();
         await nav('profiles'); await page.locator('.profile-item').click(); await page.waitForFunction(() => !document.querySelector('#profile-apply').disabled);
         await page.locator('#profile-interface').fill('Ethernet'); await page.locator('#profile-apply').click(); await page.getByText('已套用，請使用頁面上方 Safe Apply 確認或回復。', { exact: true }).waitFor();
