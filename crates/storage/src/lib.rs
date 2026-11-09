@@ -1513,7 +1513,7 @@ fn hex_digest(bytes: &[u8]) -> String {
 mod tests {
     use super::{
         BenchmarkCertificationState, BenchmarkPersistenceRequest, PacketSessionPersistenceRequest,
-        Storage, calculate_benchmark_checksum,
+        ProfileSummary, Storage, calculate_benchmark_checksum,
     };
     use nettool_benchmark::{
         AnalyzerLoadEvidence, BenchmarkDrops, BenchmarkEnvironmentSnapshot, CertificationEvidence,
@@ -1531,11 +1531,11 @@ mod tests {
                 .expect("schema version should be readable"),
             3
         );
-        assert!(
+        assert_eq!(
             storage
                 .list_profiles()
-                .expect("profile query should succeed")
-                .is_empty()
+                .expect("profile query should succeed"),
+            Vec::<ProfileSummary>::new()
         );
     }
 
@@ -1677,7 +1677,10 @@ mod tests {
                 .is_err()
         );
         storage.delete_profile("lab").expect("delete");
-        assert!(storage.list_profiles().expect("list").is_empty());
+        assert_eq!(
+            storage.list_profiles().expect("list"),
+            Vec::<ProfileSummary>::new()
+        );
     }
 
     #[test]
