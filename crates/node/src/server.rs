@@ -818,7 +818,7 @@ mod tests {
         };
         assert!(response.ready);
         assert_eq!(response.data_port, 0);
-        assert!(!response.authorization_tag.is_empty());
+        assert_ne!(response.authorization_tag, "");
     }
 
     #[tokio::test]

@@ -622,11 +622,11 @@ mod tests {
                 .state,
             SafeApplyState::Confirmed
         );
-        assert!(
+        assert_eq!(
             manager
                 .recover_expired(&mut executor, 999)
-                .expect("recovery succeeds")
-                .is_empty()
+                .expect("recovery succeeds"),
+            Vec::<String>::new()
         );
         assert_eq!(
             executor.state,

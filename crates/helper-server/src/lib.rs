@@ -351,6 +351,6 @@ mod tests {
         first.set_nonblocking(true).expect("nonblocking");
         let first = tokio::net::UnixStream::from_std(first).expect("tokio stream");
         let credential = super::unix_peer_credentials(&first).expect("kernel credentials");
-        assert!(!credential.principal.is_empty());
+        assert_ne!(credential.principal, "");
     }
 }

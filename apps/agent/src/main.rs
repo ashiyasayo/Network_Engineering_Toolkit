@@ -1241,10 +1241,9 @@ mod agent_runtime {
             assert_eq!(entries[0].comment.as_deref(), Some("managed"));
             assert_eq!(entries[1].address, "2001:db8::10");
             assert!(!entries[1].enabled);
-            assert!(
-                parse_managed_hosts(content, "missing")
-                    .expect("missing section")
-                    .is_empty()
+            assert_eq!(
+                parse_managed_hosts(content, "missing").expect("missing section"),
+                Vec::<nettool_helper_protocol::ManagedHostsEntry>::new()
             );
         }
 
